@@ -171,18 +171,20 @@ jobs:
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
     env:
-      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
-      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
-      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
-      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
-      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
-      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_STACK }}
-      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER }}
+      # Variable, then secret. Inside each store GitHub uses the environment,
+      # then the repository, then the organisation.
+      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || secrets.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || secrets.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID || secrets.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER || secrets.SITEHOST_SERVER }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK || secrets.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || secrets.SITEHOST_SERVICE || vars.SITEHOST_STACK || secrets.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || secrets.SITEHOST_CONTAINER }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_SHA: ${{ github.sha }}
       ROLLBACK_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       GIT_REMOTE: git@github.com:${{ github.repository }}.git
-      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
+      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL || secrets.SITEHOST_SITE_URL }}
       POLL_INTERVAL_SECONDS: "15"
 
     steps:
@@ -210,12 +212,13 @@ jobs:
       - name: Check source map key
         if: success() && inputs.upload_source_maps
         env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ vars.TALARIA_RELEASE_KEY || secrets.TALARIA_RELEASE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "$TALARIA_RELEASE_KEY" ]]; then
             echo "TALARIA_RELEASE_KEY is not set for the ${DEPLOY_ENVIRONMENT} environment." >&2
-            echo "Set a releases:write key as a secret or a variable on that environment, the repository, or the organisation." >&2
+            echo "Set a releases:write key as a variable or a secret on that environment, the repository, or the organisation." >&2
+            echo "A variable overrides a secret. The environment overrides the repository, which overrides the organisation." >&2
             exit 1
           fi
 
@@ -226,18 +229,51 @@ jobs:
           path: ${{ inputs.source_map_directory }}
           silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
         env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ vars.TALARIA_RELEASE_KEY || secrets.TALARIA_RELEASE_KEY }}
 
       - name: Normalize configuration
         env:
-          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
-          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST }}
-          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER }}
-          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT || secrets.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST || secrets.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER || secrets.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT || secrets.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ vars.SITEHOST_SSH_PRIVATE_KEY || secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          SITEHOST_API_KEY_RAW: ${{ vars.SITEHOST_API_KEY || secrets.SITEHOST_API_KEY }}
         run: |
           set -euo pipefail
           trim() {
             printf '%s' "$1" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+          }
+          trim_block() {
+            local value="$1"
+            value="${value//$'\r'/}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+          mask_block() {
+            local value="$1"
+            local line
+            [[ -z "$value" ]] && return 0
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              if ((${#line} >= 8)); then
+                echo "::add-mask::${line}"
+              fi
+            done <<< "$value"
+          }
+          write_block() {
+            local name="$1"
+            local value="$2"
+            local keep_trailing_newline="${3:-}"
+            local delim="SITEHOST_EOF_${RANDOM}${RANDOM}"
+            {
+              printf '%s<<%s\n' "$name" "$delim"
+              printf '%s\n' "$value"
+              if [[ -n "$keep_trailing_newline" ]]; then
+                printf '\n'
+              fi
+              printf '%s\n' "$delim"
+            } >> "$GITHUB_ENV"
           }
           port="$(trim "${SITEHOST_SSH_PORT_RAW:-}")"
           if [[ -z "$port" ]]; then
@@ -260,6 +296,10 @@ jobs:
           if [[ -z "$backup_root" ]]; then
             backup_root=/container/backups/containers
           fi
+          private_key="$(trim_block "${SITEHOST_SSH_PRIVATE_KEY_RAW:-}")"
+          api_key="$(trim_block "${SITEHOST_API_KEY_RAW:-}")"
+          mask_block "$private_key"
+          mask_block "$api_key"
           {
             printf 'SITEHOST_SSH_PORT=%s\n' "$port"
             printf 'SITEHOST_SSH_HOST=%s\n' "$(trim "${SITEHOST_SSH_HOST_RAW:-}")"
@@ -274,10 +314,14 @@ jobs:
             printf 'SITEHOST_BACKUP_ROOT=%s\n' "$backup_root"
             printf 'SITEHOST_SITE_URL=%s\n' "$(trim "${SITEHOST_SITE_URL:-}")"
           } >> "$GITHUB_ENV"
+          if [[ -n "$private_key" ]]; then
+            write_block SITEHOST_SSH_PRIVATE_KEY "$private_key" keep-newline
+          else
+            write_block SITEHOST_SSH_PRIVATE_KEY ""
+          fi
+          write_block SITEHOST_API_KEY "$api_key"
 
       - name: Check required configuration
-        env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           missing=0
@@ -293,7 +337,8 @@ jobs:
             GIT_REMOTE
           do
             if [[ -z "${!name:-}" ]]; then
-              echo "Missing ${name}. Server values belong on the organisation. Container values belong on the ${DEPLOY_ENVIRONMENT} environment." >&2
+              echo "Missing ${name}. Set it as a variable or a secret on the ${DEPLOY_ENVIRONMENT} environment, the repository, or the organisation." >&2
+              echo "A variable overrides a secret. The environment overrides the repository, which overrides the organisation." >&2
               missing=1
             fi
           done
@@ -305,7 +350,6 @@ jobs:
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           SNAPSHOT_MODE: record
         with:
           script: remote-snapshots.sh
@@ -317,7 +361,6 @@ jobs:
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
           BACKUP_LABEL: predeploy-${{ github.sha }}
         with:
           script: sitehost-api.sh
@@ -326,8 +369,6 @@ jobs:
       - name: Wait for container backup
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
-        env:
-          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -340,7 +381,6 @@ jobs:
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           SNAPSHOT_MODE: pin
         with:
           script: remote-snapshots.sh
@@ -378,7 +418,6 @@ jobs:
         if: success()
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
@@ -395,7 +434,6 @@ jobs:
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
         with:
@@ -405,8 +443,6 @@ jobs:
       - name: Wait for container restart
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
-        env:
-          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -440,7 +476,7 @@ jobs:
         with:
           host: ${{ env.SITEHOST_SSH_HOST }}
           username: ${{ env.SITEHOST_SSH_USER }}
-          key: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          key: ${{ env.SITEHOST_SSH_PRIVATE_KEY }}
           port: ${{ env.SITEHOST_SSH_PORT }}
           fingerprint: ${{ env.SITEHOST_SSH_HOST_FINGERPRINT }}
           source: rewritten-scripts/${{ steps.rewritten.outputs.name }}
@@ -482,7 +518,6 @@ jobs:
         if: success() && (inputs.backup_database || inputs.backup_assets)
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           RESTORE_ACTION: discard
         with:
           script: remote-restore.sh
@@ -496,7 +531,6 @@ jobs:
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           RESTORE_ACTION: restore
         with:
           script: remote-restore.sh
@@ -507,7 +541,6 @@ jobs:
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
           SNAPSHOT_MODE: cleanup
         with:
           script: remote-snapshots.sh
@@ -522,8 +555,6 @@ jobs:
           steps.pin-snapshot.outcome == 'success' &&
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
-        env:
-          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
         with:
           script: remote-rollback.sh
           command_timeout: 30m

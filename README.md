@@ -98,7 +98,7 @@ A failed deploy restores the database dump and assets copy that this run wrote. 
 
 Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and `npm run build:sourcemap` on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
 
-`TALARIA_RELEASE_KEY` is a Talaria key with `releases:write`. Set it as a secret or a variable on the selected environment, the repository, or the organisation. A secret is used when both are set.
+`TALARIA_RELEASE_KEY` is a Talaria key with `releases:write`. Set it as a variable or a secret on the selected environment, the repository, or the organisation. A variable overrides a secret.
 
 | Input | Default |
 | --- | --- |
@@ -113,17 +113,17 @@ The site needs a `package-lock.json` because the job runs `npm ci`.
 
 ## Secrets and variables
 
-Organisation secrets:
+Each name below can be a secret or a variable. GitHub checks the selected environment, then the repository, then the organisation. This workflow reads the variable first, so a repository or environment variable overrides an organisation secret. When no variable is set, the secret is used in that same order.
 
-- `SITEHOST_SSH_PRIVATE_KEY` — one Actions login key. Import the public half in SiteHost and attach it to each container SSH user.
-- `SITEHOST_API_KEY` — used only when `container_snapshot` is true. Give it the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` false until that works.
-- `TALARIA_RELEASE_KEY` — when the site uploads source maps. A secret or a variable with this name works. A secret is used when both are set. An environment value overrides the repository and the organisation.
+`SITEHOST_SSH_PRIVATE_KEY` is the Actions login key. Import the public half in SiteHost and attach it to each container SSH user. Store the private key as a secret so the job log masks it. A variable still works, and the workflow masks it after the normalize step.
 
-Organisation variables: `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, `SITEHOST_SSH_HOST`, `SITEHOST_SSH_PORT`, `SITEHOST_SSH_HOST_FINGERPRINT`.
+`SITEHOST_API_KEY` is used only when `container_snapshot` is true. Give it the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` false until that works.
 
-The SSH host, port, and fingerprint are the same for every container on one server. An environment value with the same name overrides the organisation value.
+`TALARIA_RELEASE_KEY` is required when the site uploads source maps.
 
-Environment variables, one GitHub environment per container: `SITEHOST_SSH_USER`, `SITEHOST_STACK`, `SITEHOST_SITE_URL`.
+These names are usually shared by every container on one server: `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, `SITEHOST_SSH_HOST`, `SITEHOST_SSH_PORT`, `SITEHOST_SSH_HOST_FINGERPRINT`. Set a repository or environment value with the same name to override the organisation.
+
+These names belong on the GitHub environment for one container: `SITEHOST_SSH_USER`, `SITEHOST_STACK`, `SITEHOST_SITE_URL`.
 
 `SITEHOST_APP_PATH` defaults to `/container/application`. `SITEHOST_BACKUP_ROOT` defaults to `/container/backups/containers`. `SITEHOST_SERVICE` defaults to `SITEHOST_STACK`. Set `SITEHOST_CONTAINER` only when the stack has more than one container.
 
