@@ -164,50 +164,9 @@ jobs:
             exit 1
           fi
 
-  sourcemaps:
-    needs: guard
-    if: inputs.upload_source_maps
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build the source map
-        env:
-          SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
-        run: bash --noprofile --norc -c "$SOURCE_MAP_COMMAND"
-
-      - name: Upload source maps
-        uses: newtalaria/source-maps@v1
-        with:
-          path: ${{ inputs.source_map_directory }}
-          silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
-        env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
-
-      - name: Save rewritten script
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: rewritten-scripts-js
-          path: ${{ inputs.rewritten_script }}
-          if-no-files-found: error
-
   deploy:
-    needs: [guard, sourcemaps]
-    if: >-
-      always() &&
-      needs.guard.result == 'success' &&
-      (needs.sourcemaps.result == 'success' || needs.sourcemaps.result == 'skipped')
+    needs: guard
+    if: always() && needs.guard.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
@@ -227,6 +186,48 @@ jobs:
       POLL_INTERVAL_SECONDS: "15"
 
     steps:
+      - name: Checkout code
+        if: inputs.upload_source_maps
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        if: success() && inputs.upload_source_maps
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        if: success() && inputs.upload_source_maps
+        run: npm ci
+
+      - name: Build the source map
+        if: success() && inputs.upload_source_maps
+        env:
+          SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
+        run: bash --noprofile --norc -c "$SOURCE_MAP_COMMAND"
+
+      - name: Check source map key
+        if: success() && inputs.upload_source_maps
+        env:
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TALARIA_RELEASE_KEY" ]]; then
+            echo "TALARIA_RELEASE_KEY is not set for the ${DEPLOY_ENVIRONMENT} environment." >&2
+            echo "Add a releases:write key on that environment, the repository, or the organisation." >&2
+            exit 1
+          fi
+
+      - name: Upload source maps
+        if: success() && inputs.upload_source_maps
+        uses: newtalaria/source-maps@v1
+        with:
+          path: ${{ inputs.source_map_directory }}
+          silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
+        env:
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+
       - name: Normalize configuration
         env:
           SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
@@ -413,7 +414,7 @@ jobs:
           api_job_id: ${{ steps.set-release.outputs.job_id }}
           api_timeout: "600"
 
-      - name: Rewritten script name
+      - name: Stage rewritten script
         id: rewritten
         if: success() && inputs.upload_source_maps
         env:
@@ -425,14 +426,13 @@ jobs:
             echo "rewritten_script must end in a file name." >&2
             exit 1
           fi
+          if [[ ! -f "$REWRITTEN_SCRIPT" ]]; then
+            echo "Rewritten script was not built: ${REWRITTEN_SCRIPT}" >&2
+            exit 1
+          fi
+          mkdir -p rewritten-scripts
+          cp "$REWRITTEN_SCRIPT" "rewritten-scripts/${name}"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
-
-      - name: Download rewritten script
-        if: success() && inputs.upload_source_maps
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: rewritten-scripts-js
-          path: rewritten-scripts
 
       - name: Install rewritten script
         if: success() && inputs.upload_source_maps
