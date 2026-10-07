@@ -47,10 +47,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}
-  cancel-in-progress: false
-
 jobs:
   deploy:
     uses: newtalaria/sitehost-silverstripe/.github/workflows/deploy.yml@v1
@@ -68,7 +64,7 @@ jobs:
 
 A site with another container adds that name to its own choice list and creates a GitHub environment with the same name. The shared workflow takes the string it is given. It does not treat `production` as special. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
-Two sites can deploy at the same time. Two deploys of one site to the same environment wait.
+The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can deploy at the same time. Two deploys of one site to the same environment wait. Do not set that same group on the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group.
 
 ## What each run can turn on
 
