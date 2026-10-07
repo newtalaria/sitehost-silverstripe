@@ -1,0 +1,122 @@
+name: SiteHost SSH
+description: >-
+  Run a whitelisted Silverstripe container script over SSH, or a local
+  SiteHost API command. Used by the sitehost-silverstripe deploy workflow.
+author: Talaria
+branding:
+  icon: server
+  color: blue
+inputs:
+  script:
+    description: >-
+      Whitelisted script: remote-deploy.sh, remote-restore.sh,
+      remote-rollback.sh, remote-snapshots.sh, or sitehost-api.sh.
+    required: true
+  command_timeout:
+    description: Timeout passed to the SSH action for a remote script.
+    required: false
+    default: 30m
+  env_names:
+    description: >-
+      Space-separated environment variable names to export into a remote
+      script. Values are read from the calling step's environment.
+    required: false
+    default: ""
+  api_command:
+    description: backup, set-release, or poll-job. Required for sitehost-api.sh.
+    required: false
+    default: ""
+  api_job_type:
+    description: SiteHost job type for poll-job.
+    required: false
+    default: ""
+  api_job_id:
+    description: SiteHost job id for poll-job.
+    required: false
+    default: ""
+  api_timeout:
+    description: poll-job timeout in seconds. Omit to use the script default.
+    required: false
+    default: ""
+outputs:
+  job_type:
+    description: SiteHost job type returned by a local API command.
+    value: ${{ steps.api.outputs.job_type }}
+  job_id:
+    description: SiteHost job id returned by a local API command.
+    value: ${{ steps.api.outputs.job_id }}
+runs:
+  using: composite
+  steps:
+    - name: Build SSH payload
+      id: payload
+      if: inputs.script != 'sitehost-api.sh'
+      shell: bash
+      env:
+        SCRIPT_NAME: ${{ inputs.script }}
+        ENV_NAMES: ${{ inputs.env_names }}
+        PAYLOAD_PATH: ${{ runner.temp }}/sitehost-payload.sh
+      run: |
+        set -euo pipefail
+        case "$SCRIPT_NAME" in
+          remote-deploy.sh|remote-restore.sh|remote-rollback.sh|remote-snapshots.sh) ;;
+          *)
+            echo "Unknown remote script: ${SCRIPT_NAME}" >&2
+            exit 1
+            ;;
+        esac
+        names=()
+        # Names are split on spaces. Each name is checked before it is exported.
+        # shellcheck disable=SC2086
+        for name in $ENV_NAMES; do
+          if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "Refusing to export ${name}" >&2
+            exit 1
+          fi
+          names+=("$name")
+        done
+        bash "$GITHUB_ACTION_PATH/ssh-payload.sh" \
+          "$GITHUB_ACTION_PATH/$SCRIPT_NAME" \
+          "$PAYLOAD_PATH" \
+          "${names[@]}"
+        echo "payload_path=${PAYLOAD_PATH}" >> "$GITHUB_OUTPUT"
+
+    - name: Run remote script
+      if: success() && inputs.script != 'sitehost-api.sh'
+      uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+      with:
+        host: ${{ env.SITEHOST_SSH_HOST }}
+        username: ${{ env.SITEHOST_SSH_USER }}
+        key: ${{ env.SITEHOST_SSH_PRIVATE_KEY }}
+        port: ${{ env.SITEHOST_SSH_PORT }}
+        fingerprint: ${{ env.SITEHOST_SSH_HOST_FINGERPRINT }}
+        command_timeout: ${{ inputs.command_timeout }}
+        script_path: ${{ steps.payload.outputs.payload_path }}
+
+    - name: Run SiteHost API command
+      id: api
+      if: success() && inputs.script == 'sitehost-api.sh'
+      shell: bash
+      env:
+        API_COMMAND: ${{ inputs.api_command }}
+        API_JOB_TYPE: ${{ inputs.api_job_type }}
+        API_JOB_ID: ${{ inputs.api_job_id }}
+        API_TIMEOUT: ${{ inputs.api_timeout }}
+      run: |
+        set -euo pipefail
+        case "$API_COMMAND" in
+          backup|set-release)
+            bash "$GITHUB_ACTION_PATH/sitehost-api.sh" "$API_COMMAND"
+            ;;
+          poll-job)
+            if [[ -n "$API_TIMEOUT" ]]; then
+              bash "$GITHUB_ACTION_PATH/sitehost-api.sh" poll-job "$API_JOB_TYPE" "$API_JOB_ID" "$API_TIMEOUT"
+            else
+              bash "$GITHUB_ACTION_PATH/sitehost-api.sh" poll-job "$API_JOB_TYPE" "$API_JOB_ID"
+            fi
+            ;;
+          *)
+            echo "api_command must be backup, set-release, or poll-job" >&2
+            exit 1
+            ;;
+        esac

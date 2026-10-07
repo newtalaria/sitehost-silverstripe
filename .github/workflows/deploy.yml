@@ -1,0 +1,536 @@
+# Deploy one Silverstripe site to a SiteHost container.
+#
+# Called by a site repository. The environment name and the backup choices
+# come from the caller. See README.md for secrets, variables, and the caller.
+
+name: Deploy to SiteHost
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name for this container.
+        type: string
+        required: true
+      emergency_override:
+        description: Deploy a ref that is not main or a tag when require_main_or_tag is set.
+        type: boolean
+        required: false
+        default: false
+      cleanup_stale_branches:
+        description: Delete local branches on the container after checkout.
+        type: boolean
+        required: false
+        default: false
+      backup_database:
+        description: Dump the Silverstripe database before changing files.
+        type: boolean
+        required: false
+        default: false
+      backup_assets:
+        description: Copy public/assets before changing files.
+        type: boolean
+        required: false
+        default: false
+      test_rollback:
+        description: Fail after a successful deploy so this run's backups are restored.
+        type: boolean
+        required: false
+        default: false
+      require_main_or_tag:
+        description: Fail unless this run is from main or a tag.
+        type: boolean
+        required: false
+        default: false
+      container_snapshot:
+        description: >-
+          Run the SiteHost API container backup, snapshot pin, and snapshot
+          rollback. Leave false until a GitHub-hosted runner can use the API key.
+        type: boolean
+        required: false
+        default: false
+      remote_build_script:
+        description: Relative path, run on the container after checkout.
+        type: string
+        required: false
+        default: ./.scripts/build.sh
+      upload_source_maps:
+        description: Build and upload JavaScript source maps, then copy the rewritten script onto the container.
+        type: boolean
+        required: false
+        default: false
+      node_version:
+        description: Node version used when upload_source_maps is true.
+        type: string
+        required: false
+        default: "22"
+      source_map_command:
+        description: Command that writes the source map files.
+        type: string
+        required: false
+        default: npm run build:sourcemap
+      source_map_directory:
+        description: Directory of built source maps, relative to the site repository.
+        type: string
+        required: false
+        default: source-maps
+      rewritten_script:
+        description: Built script file to copy onto the container after checkout.
+        type: string
+        required: false
+        default: source-maps/scripts.js
+      remote_script_dir:
+        description: Directory under the app path that receives the rewritten script.
+        type: string
+        required: false
+        default: themes/default/javascript
+      silverstripe_combine_files:
+        description: Shift uploaded maps for Silverstripe Requirements::combine_files.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate environment name
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$ENVIRONMENT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]]; then
+            echo "environment must match [A-Za-z0-9][A-Za-z0-9_.-]{0,62}." >&2
+            exit 1
+          fi
+
+      - name: Validate paths
+        env:
+          REMOTE_BUILD_SCRIPT: ${{ inputs.remote_build_script }}
+          UPLOAD_SOURCE_MAPS: ${{ inputs.upload_source_maps }}
+          REMOTE_SCRIPT_DIR: ${{ inputs.remote_script_dir }}
+          SOURCE_MAP_DIRECTORY: ${{ inputs.source_map_directory }}
+          REWRITTEN_SCRIPT: ${{ inputs.rewritten_script }}
+          SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
+          NODE_VERSION: ${{ inputs.node_version }}
+        run: |
+          set -euo pipefail
+          assert_relative() {
+            local label="$1"
+            local value="$2"
+            if [[ -z "$value" ]]; then
+              echo "${label} is required." >&2
+              exit 1
+            fi
+            case "$value" in
+              /*|*..*|*$'\n'*|*' '*)
+                echo "${label} must be a relative path without spaces or .." >&2
+                exit 1
+                ;;
+            esac
+          }
+          assert_relative "remote_build_script" "$REMOTE_BUILD_SCRIPT"
+          if [[ "$UPLOAD_SOURCE_MAPS" == "true" ]]; then
+            assert_relative "remote_script_dir" "$REMOTE_SCRIPT_DIR"
+            assert_relative "source_map_directory" "$SOURCE_MAP_DIRECTORY"
+            assert_relative "rewritten_script" "$REWRITTEN_SCRIPT"
+            if [[ -z "$SOURCE_MAP_COMMAND" || "$SOURCE_MAP_COMMAND" == *$'\n'* ]]; then
+              echo "source_map_command must be a single line." >&2
+              exit 1
+            fi
+            if [[ ! "$NODE_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+              echo "node_version must be a Node version such as 22." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Restrict protected refs
+        if: inputs.require_main_or_tag && inputs.emergency_override != true
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" != "tag" && "$REF" != "refs/heads/main" ]]; then
+            echo "This environment only deploys from main or a tag." >&2
+            echo "Re-run with emergency override to deploy this ref." >&2
+            exit 1
+          fi
+
+  sourcemaps:
+    needs: guard
+    if: inputs.upload_source_maps
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the source map
+        env:
+          SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
+        run: bash --noprofile --norc -c "$SOURCE_MAP_COMMAND"
+
+      - name: Upload source maps
+        uses: newtalaria/source-maps@v1
+        with:
+          path: ${{ inputs.source_map_directory }}
+          silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
+        env:
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+
+      - name: Save rewritten script
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rewritten-scripts-js
+          path: ${{ inputs.rewritten_script }}
+          if-no-files-found: error
+
+  deploy:
+    needs: [guard, sourcemaps]
+    if: >-
+      always() &&
+      needs.guard.result == 'success' &&
+      (needs.sourcemaps.result == 'success' || needs.sourcemaps.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ${{ inputs.environment }}
+    env:
+      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER }}
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      DEPLOY_SHA: ${{ github.sha }}
+      ROLLBACK_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      GIT_REMOTE: git@github.com:${{ github.repository }}.git
+      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
+      POLL_INTERVAL_SECONDS: "15"
+
+    steps:
+      - name: Normalize configuration
+        env:
+          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          trim() {
+            printf '%s' "$1" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+          }
+          port="$(trim "${SITEHOST_SSH_PORT_RAW:-}")"
+          if [[ -z "$port" ]]; then
+            port=22
+          fi
+          if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+            echo "SITEHOST_SSH_PORT must be a whole number." >&2
+            exit 1
+          fi
+          stack="$(trim "${SITEHOST_STACK:-}")"
+          service="$(trim "${SITEHOST_SERVICE:-}")"
+          if [[ -z "$service" ]]; then
+            service="$stack"
+          fi
+          app_path="$(trim "${SITEHOST_APP_PATH:-}")"
+          backup_root="$(trim "${SITEHOST_BACKUP_ROOT:-}")"
+          if [[ -z "$app_path" ]]; then
+            app_path=/container/application
+          fi
+          if [[ -z "$backup_root" ]]; then
+            backup_root=/container/backups/containers
+          fi
+          {
+            printf 'SITEHOST_SSH_PORT=%s\n' "$port"
+            printf 'SITEHOST_SSH_HOST=%s\n' "$(trim "${SITEHOST_SSH_HOST_RAW:-}")"
+            printf 'SITEHOST_SSH_USER=%s\n' "$(trim "${SITEHOST_SSH_USER_RAW:-}")"
+            printf 'SITEHOST_SSH_HOST_FINGERPRINT=%s\n' "$(trim "${SITEHOST_SSH_HOST_FINGERPRINT_RAW:-}")"
+            printf 'SITEHOST_CLIENT_ID=%s\n' "$(trim "${SITEHOST_CLIENT_ID:-}")"
+            printf 'SITEHOST_SERVER=%s\n' "$(trim "${SITEHOST_SERVER:-}")"
+            printf 'SITEHOST_STACK=%s\n' "$stack"
+            printf 'SITEHOST_SERVICE=%s\n' "$service"
+            printf 'SITEHOST_CONTAINER=%s\n' "$(trim "${SITEHOST_CONTAINER:-}")"
+            printf 'SITEHOST_APP_PATH=%s\n' "$app_path"
+            printf 'SITEHOST_BACKUP_ROOT=%s\n' "$backup_root"
+            printf 'SITEHOST_SITE_URL=%s\n' "$(trim "${SITEHOST_SITE_URL:-}")"
+          } >> "$GITHUB_ENV"
+
+      - name: Check required configuration
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            SITEHOST_SSH_PRIVATE_KEY \
+            SITEHOST_SSH_HOST \
+            SITEHOST_SSH_USER \
+            SITEHOST_SSH_HOST_FINGERPRINT \
+            SITEHOST_APP_PATH \
+            SITEHOST_BACKUP_ROOT \
+            SITEHOST_SITE_URL \
+            DEPLOY_SHA \
+            GIT_REMOTE
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing ${name}. Server values belong on the organisation. Container values belong on the ${DEPLOY_ENVIRONMENT} environment." >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Record existing snapshots
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          SNAPSHOT_MODE: record
+        with:
+          script: remote-snapshots.sh
+          command_timeout: 5m
+          env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Start container backup
+        id: backup
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+          BACKUP_LABEL: predeploy-${{ github.sha }}
+        with:
+          script: sitehost-api.sh
+          api_command: backup
+
+      - name: Wait for container backup
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+        with:
+          script: sitehost-api.sh
+          api_command: poll-job
+          api_job_type: ${{ steps.backup.outputs.job_type }}
+          api_job_id: ${{ steps.backup.outputs.job_id }}
+          api_timeout: "2700"
+
+      - name: Pin new snapshot
+        id: pin-snapshot
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          SNAPSHOT_MODE: pin
+        with:
+          script: remote-snapshots.sh
+          command_timeout: 5m
+          env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Resolve release name
+        id: release
+        if: success()
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$REF_NAME" || "$REF_NAME" == *$'\n'* || "$REF_NAME" == *'"'* || "$REF_NAME" == *"'"* || "$REF_NAME" == *'#'* ]]; then
+            echo "The git ref cannot be used in TALARIA_RELEASE." >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "DEPLOY_SHA must be a 40 character git commit." >&2
+            exit 1
+          fi
+          short="${DEPLOY_SHA:0:7}"
+          value="${REF_NAME}@${short}"
+          {
+            echo "value<<RELEASE_EOF"
+            printf '%s\n' "$value"
+            echo "RELEASE_EOF"
+            echo "commit_sha<<COMMIT_EOF"
+            printf '%s\n' "$DEPLOY_SHA"
+            echo "COMMIT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy commit
+        id: deploy
+        if: success()
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          TALARIA_RELEASE: ${{ steps.release.outputs.value }}
+          TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
+          CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
+          BACKUP_DATABASE: ${{ inputs.backup_database }}
+          BACKUP_ASSETS: ${{ inputs.backup_assets }}
+          REMOTE_BUILD_SCRIPT: ${{ inputs.remote_build_script }}
+        with:
+          script: remote-deploy.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID REMOTE_BUILD_SCRIPT
+
+      - name: Set TALARIA_RELEASE
+        id: set-release
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+          TALARIA_RELEASE: ${{ steps.release.outputs.value }}
+          TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
+        with:
+          script: sitehost-api.sh
+          api_command: set-release
+
+      - name: Wait for container restart
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+        with:
+          script: sitehost-api.sh
+          api_command: poll-job
+          api_job_type: ${{ steps.set-release.outputs.job_type }}
+          api_job_id: ${{ steps.set-release.outputs.job_id }}
+          api_timeout: "600"
+
+      - name: Rewritten script name
+        id: rewritten
+        if: success() && inputs.upload_source_maps
+        env:
+          REWRITTEN_SCRIPT: ${{ inputs.rewritten_script }}
+        run: |
+          set -euo pipefail
+          name="${REWRITTEN_SCRIPT##*/}"
+          if [[ -z "$name" || "$name" == .* || "$name" == *".."* ]]; then
+            echo "rewritten_script must end in a file name." >&2
+            exit 1
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Download rewritten script
+        if: success() && inputs.upload_source_maps
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rewritten-scripts-js
+          path: rewritten-scripts
+
+      - name: Install rewritten script
+        if: success() && inputs.upload_source_maps
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ env.SITEHOST_SSH_HOST }}
+          username: ${{ env.SITEHOST_SSH_USER }}
+          key: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          port: ${{ env.SITEHOST_SSH_PORT }}
+          fingerprint: ${{ env.SITEHOST_SSH_HOST_FINGERPRINT }}
+          source: rewritten-scripts/${{ steps.rewritten.outputs.name }}
+          target: ${{ env.SITEHOST_APP_PATH }}/${{ inputs.remote_script_dir }}
+          strip_components: 1
+          overwrite: true
+
+      - name: Smoke check
+        id: smoke
+        if: success()
+        run: |
+          set -euo pipefail
+          case "$SITEHOST_SITE_URL" in
+            https://*|http://*) ;;
+            *)
+              echo "SITEHOST_SITE_URL must start with http:// or https://" >&2
+              exit 1
+              ;;
+          esac
+          curl --fail --silent --show-error --location \
+            --retry 8 --retry-delay 10 --retry-connrefused --retry-all-errors \
+            --output /dev/null --max-time 30 \
+            "$SITEHOST_SITE_URL"
+
+      - name: Fail for rollback test
+        id: test-rollback
+        if: success() && inputs.test_rollback
+        run: |
+          echo "Test rollback is on. The deploy finished, and this step fails so database and assets backups from this run are restored."
+          exit 1
+
+      - name: Confirm php restart
+        if: success()
+        run: |
+          echo "Deploy succeeded. TALARIA_RELEASE and TALARIA_COMMIT_SHA are in .env, and php was restarted."
+          echo "If the container environment screen also sets either variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
+
+      - name: Discard deploy backups
+        if: success() && (inputs.backup_database || inputs.backup_assets)
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          RESTORE_ACTION: discard
+        with:
+          script: remote-restore.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
+
+      - name: Restore database and assets
+        if: >-
+          failure() &&
+          (inputs.backup_database || inputs.backup_assets) &&
+          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          RESTORE_ACTION: restore
+        with:
+          script: remote-restore.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
+
+      - name: Remove snapshot records
+        if: success() && inputs.container_snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+          SNAPSHOT_MODE: cleanup
+        with:
+          script: remote-snapshots.sh
+          command_timeout: 5m
+          env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Roll back container
+        id: rollback
+        if: >-
+          failure() &&
+          inputs.container_snapshot &&
+          steps.pin-snapshot.outcome == 'success' &&
+          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+        with:
+          script: remote-rollback.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT
+
+      - name: Release variable after rollback
+        if: failure() && steps.rollback.outcome == 'success' && steps.set-release.outcome == 'success'
+        run: |
+          echo "Application files and the database were restored."
+          echo "TALARIA_RELEASE was already updated and was left unchanged, because changing it restarts the container again."
