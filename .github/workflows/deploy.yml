@@ -210,12 +210,12 @@ jobs:
       - name: Check source map key
         if: success() && inputs.upload_source_maps
         env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "$TALARIA_RELEASE_KEY" ]]; then
             echo "TALARIA_RELEASE_KEY is not set for the ${DEPLOY_ENVIRONMENT} environment." >&2
-            echo "Add a releases:write key on that environment, the repository, or the organisation." >&2
+            echo "Set a releases:write key as a secret or a variable on that environment, the repository, or the organisation." >&2
             exit 1
           fi
 
@@ -226,7 +226,7 @@ jobs:
           path: ${{ inputs.source_map_directory }}
           silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
         env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
 
       - name: Normalize configuration
         env:

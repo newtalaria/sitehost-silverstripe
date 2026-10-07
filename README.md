@@ -98,7 +98,7 @@ A failed deploy restores the database dump and assets copy that this run wrote. 
 
 Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and `npm run build:sourcemap` on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
 
-`TALARIA_RELEASE_KEY` is a Talaria key with `releases:write`. The deploy job selects the GitHub environment before it builds or uploads maps, so the key can live on that environment, the repository, or the organisation.
+`TALARIA_RELEASE_KEY` is a Talaria key with `releases:write`. Set it as a secret or a variable on the selected environment, the repository, or the organisation. A secret is used when both are set.
 
 | Input | Default |
 | --- | --- |
@@ -117,7 +117,7 @@ Organisation secrets:
 
 - `SITEHOST_SSH_PRIVATE_KEY` — one Actions login key. Import the public half in SiteHost and attach it to each container SSH user.
 - `SITEHOST_API_KEY` — used only when `container_snapshot` is true. Give it the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` false until that works.
-- `TALARIA_RELEASE_KEY` — when the site uploads source maps. An environment secret with this name is used for that container. A repository or organisation secret is used when the environment does not set one.
+- `TALARIA_RELEASE_KEY` — when the site uploads source maps. A secret or a variable with this name works. A secret is used when both are set. An environment value overrides the repository and the organisation.
 
 Organisation variables: `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, `SITEHOST_SSH_HOST`, `SITEHOST_SSH_PORT`, `SITEHOST_SSH_HOST_FINGERPRINT`.
 
