@@ -23,15 +23,15 @@ on:
         required: false
         default: false
       backup_database:
-        description: Dump the Silverstripe database before changing files.
+        description: Dump the Silverstripe database on the container before changing files.
         type: boolean
         required: false
-        default: false
+        default: true
       backup_assets:
-        description: Copy public/assets before changing files.
+        description: Copy public/assets on the container before changing files.
         type: boolean
         required: false
-        default: false
+        default: true
       test_rollback:
         description: Fail after a successful deploy so this run's backups are restored.
         type: boolean
@@ -44,8 +44,8 @@ on:
         default: false
       container_snapshot:
         description: >-
-          Run the SiteHost API container backup, snapshot pin, and snapshot
-          rollback. Leave false until a GitHub-hosted runner can use the API key.
+          SiteHost API container snapshot. Stays false. The API key allowlist
+          cannot list a GitHub-hosted runner, because that address changes every job.
         type: boolean
         required: false
         default: false
