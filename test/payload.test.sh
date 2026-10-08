@@ -55,6 +55,10 @@ if [[ "$deploy_decoded" != *"SITEHOST_LIB_LOADED=1"* || "$deploy_decoded" != *"R
   echo "remote deploy payload did not include lib.sh and the script" >&2
   exit 1
 fi
+if [[ "$deploy_decoded" != *"composer install --optimize-autoloader --no-dev --no-progress --no-interaction --prefer-dist"* || "$deploy_decoded" != *"vendor/bin/sake dev/build flush=all"* ]]; then
+  echo "remote deploy payload did not include the Silverstripe build" >&2
+  exit 1
+fi
 lib_count="$(printf '%s\n' "$deploy_decoded" | grep -c 'SITEHOST_LIB_LOADED=1')"
 if [[ "$lib_count" != "1" ]]; then
   echo "expected lib.sh once in the payload, found ${lib_count}" >&2

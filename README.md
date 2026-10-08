@@ -132,7 +132,6 @@ Run it from the Actions tab with **Run workflow**. Pick the environment. Databas
 | `test_rollback` | `false` | Finish the deploy, then fail so the backups from this run are restored. |
 | `require_main_or_tag` | `false` | Fail unless the ref is `main` or a tag. `emergency_override` deploys another ref. |
 | `upload_source_maps` | `false` | Build source maps, upload them, and copy the rewritten script onto the theme path after checkout. |
-| `remote_build_script` | `./.scripts/build.sh` | Relative path with no `..`. The container runs it with `bash` after checkout. |
 
 ## What the deploy does
 
@@ -140,7 +139,7 @@ Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `S
 
 1. Dump the database and copy `public/assets` on the container before changing files. Turn either input off to skip that copy.
 2. Fetch the exact commit and check it out detached.
-3. Run the site build script.
+3. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
 4. Write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`.
 5. `supervisorctl restart php`.
 6. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.

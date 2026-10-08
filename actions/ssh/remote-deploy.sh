@@ -21,7 +21,6 @@ manifest="${log_dir}/deploy-rollback-manifest"
 assets_live="${SITEHOST_APP_PATH}/public/assets"
 assets_backup="${log_dir}/deploy-rollback-assets"
 defaults=""
-REMOTE_BUILD_SCRIPT="${REMOTE_BUILD_SCRIPT:-./.scripts/build.sh}"
 
 # Remove the partial dump and the temporary MySQL defaults file when the script exits.
 cleanup() {
@@ -100,6 +99,19 @@ write_talaria_release() {
   write_env_assignment TALARIA_RELEASE "$TALARIA_RELEASE"
   write_env_assignment TALARIA_COMMIT_SHA "$TALARIA_COMMIT_SHA"
   echo "Wrote TALARIA_RELEASE=${TALARIA_RELEASE} and TALARIA_COMMIT_SHA to ${env_file}."
+}
+
+# Install PHP dependencies and rebuild the Silverstripe database schema.
+build_site() {
+  if ! command -v composer >/dev/null 2>&1; then
+    echo "composer must be on PATH" >&2
+    exit 1
+  fi
+  echo "Installing PHP dependencies..."
+  composer install --optimize-autoloader --no-dev --no-progress --no-interaction --prefer-dist
+  echo "Build Silverstripe"
+  vendor/bin/sake dev/build flush=all
+  echo "Silverstripe build completed."
 }
 
 # Reload PHP so the new code and .env are the process serving the site.
@@ -185,7 +197,6 @@ write_rollback_manifest() {
 }
 
 assert_absolute_path "SITEHOST_APP_PATH" "$SITEHOST_APP_PATH"
-assert_relative_path "REMOTE_BUILD_SCRIPT" "$REMOTE_BUILD_SCRIPT"
 if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "DEPLOY_SHA must be a 40 character git commit" >&2
   exit 1
@@ -228,11 +239,7 @@ echo "Fetching ${DEPLOY_SHA}"
 gitc fetch origin "$DEPLOY_SHA"
 gitc checkout --force --detach "$DEPLOY_SHA"
 delete_other_branches
-if [[ ! -f "$REMOTE_BUILD_SCRIPT" ]]; then
-  echo "Build script not found: ${REMOTE_BUILD_SCRIPT}" >&2
-  exit 1
-fi
-bash "$REMOTE_BUILD_SCRIPT"
+build_site
 write_talaria_release
 restart_php
 echo "Deployed ${DEPLOY_SHA} at ${SITEHOST_APP_PATH}"

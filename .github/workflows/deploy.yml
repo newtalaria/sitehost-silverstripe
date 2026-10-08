@@ -49,11 +49,6 @@ on:
         type: boolean
         required: false
         default: false
-      remote_build_script:
-        description: Relative path, run on the container after checkout.
-        type: string
-        required: false
-        default: ./.scripts/build.sh
       upload_source_maps:
         description: Build and upload JavaScript source maps, then copy the rewritten script onto the container.
         type: boolean
@@ -123,7 +118,6 @@ jobs:
 
       - name: Validate paths
         env:
-          REMOTE_BUILD_SCRIPT: ${{ inputs.remote_build_script }}
           UPLOAD_SOURCE_MAPS: ${{ inputs.upload_source_maps }}
           REMOTE_SCRIPT_DIR: ${{ inputs.remote_script_dir }}
           SOURCE_MAP_DIRECTORY: ${{ inputs.source_map_directory }}
@@ -146,7 +140,6 @@ jobs:
                 ;;
             esac
           }
-          assert_relative "remote_build_script" "$REMOTE_BUILD_SCRIPT"
           if [[ "$UPLOAD_SOURCE_MAPS" == "true" ]]; then
             assert_relative "remote_script_dir" "$REMOTE_SCRIPT_DIR"
             assert_relative "source_map_directory" "$SOURCE_MAP_DIRECTORY"
@@ -432,11 +425,10 @@ jobs:
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
           BACKUP_DATABASE: ${{ inputs.backup_database }}
           BACKUP_ASSETS: ${{ inputs.backup_assets }}
-          REMOTE_BUILD_SCRIPT: ${{ inputs.remote_build_script }}
         with:
           script: remote-deploy.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID REMOTE_BUILD_SCRIPT
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
 
       - name: Set TALARIA_RELEASE
         id: set-release

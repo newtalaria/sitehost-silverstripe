@@ -30,22 +30,6 @@ assert_absolute_path() {
   fi
 }
 
-# Reject a relative path that escapes its directory.
-assert_relative_path() {
-  local label="$1"
-  local value="$2"
-  if [[ -z "$value" ]]; then
-    echo "${label} is required" >&2
-    exit 1
-  fi
-  case "$value" in
-    /*|*..*|*$'\n'*|*' '*)
-      echo "${label} must be a relative path without spaces or .." >&2
-      exit 1
-      ;;
-  esac
-}
-
 # Escape a value so it can sit inside a quoted MySQL option-file entry.
 mysql_ini_value() {
   local value="${1//\\/\\\\}"
