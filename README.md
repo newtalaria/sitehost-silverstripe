@@ -163,3 +163,29 @@ The site needs a `package-lock.json` because the job runs `npm ci`. Set `TALARIA
 | `rewritten_script` | `source-maps/scripts.js` |
 | `remote_script_dir` | `themes/default/javascript` |
 | `silverstripe_combine_files` | `true` |
+
+Pass them on the same job:
+
+```yaml
+jobs:
+  deploy:
+    uses: newtalaria/sitehost-silverstripe/.github/workflows/deploy.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+      emergency_override: ${{ inputs.emergency_override }}
+      cleanup_stale_branches: ${{ inputs.cleanup_stale_branches }}
+      backup_database: ${{ inputs.backup_database }}
+      backup_assets: ${{ inputs.backup_assets }}
+      test_rollback: ${{ inputs.test_rollback }}
+      require_main_or_tag: ${{ inputs.environment == 'production' }}
+      upload_source_maps: true
+      node_version: "22"
+      source_map_command: npm run build:sourcemap
+      source_map_directory: source-maps
+      rewritten_script: source-maps/scripts.js
+      remote_script_dir: themes/default/javascript
+      silverstripe_combine_files: true
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+```
