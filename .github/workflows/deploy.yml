@@ -171,20 +171,20 @@ jobs:
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
     env:
-      # Variable, then secret. Inside each store GitHub uses the environment,
+      # Secret, then variable. Inside each store GitHub uses the environment,
       # then the repository, then the organisation.
-      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || secrets.SITEHOST_APP_PATH || '/container/application' }}
-      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || secrets.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
-      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID || secrets.SITEHOST_CLIENT_ID }}
-      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER || secrets.SITEHOST_SERVER }}
-      SITEHOST_STACK: ${{ vars.SITEHOST_STACK || secrets.SITEHOST_STACK }}
-      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || secrets.SITEHOST_SERVICE || vars.SITEHOST_STACK || secrets.SITEHOST_STACK }}
-      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || secrets.SITEHOST_CONTAINER }}
+      SITEHOST_APP_PATH: ${{ secrets.SITEHOST_APP_PATH || vars.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ secrets.SITEHOST_BACKUP_ROOT || vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ secrets.SITEHOST_CLIENT_ID || vars.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ secrets.SITEHOST_SERVER || vars.SITEHOST_SERVER }}
+      SITEHOST_STACK: ${{ secrets.SITEHOST_STACK || vars.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ secrets.SITEHOST_SERVICE || vars.SITEHOST_SERVICE || secrets.SITEHOST_STACK || vars.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ secrets.SITEHOST_CONTAINER || vars.SITEHOST_CONTAINER }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_SHA: ${{ github.sha }}
       ROLLBACK_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       GIT_REMOTE: git@github.com:${{ github.repository }}.git
-      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL || secrets.SITEHOST_SITE_URL }}
+      SITEHOST_SITE_URL: ${{ secrets.SITEHOST_SITE_URL || vars.SITEHOST_SITE_URL }}
       POLL_INTERVAL_SECONDS: "15"
 
     steps:
@@ -212,13 +212,13 @@ jobs:
       - name: Check source map key
         if: success() && inputs.upload_source_maps
         env:
-          TALARIA_RELEASE_KEY: ${{ vars.TALARIA_RELEASE_KEY || secrets.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "$TALARIA_RELEASE_KEY" ]]; then
             echo "TALARIA_RELEASE_KEY is not set for the ${DEPLOY_ENVIRONMENT} environment." >&2
-            echo "Set a releases:write key as a variable or a secret on that environment, the repository, or the organisation." >&2
-            echo "A variable overrides a secret. The environment overrides the repository, which overrides the organisation." >&2
+            echo "Set a releases:write key as a secret on that environment, the repository, or the organisation." >&2
+            echo "A variable is used only when no secret is set. The environment overrides the repository, which overrides the organisation." >&2
             exit 1
           fi
 
@@ -229,16 +229,16 @@ jobs:
           path: ${{ inputs.source_map_directory }}
           silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
         env:
-          TALARIA_RELEASE_KEY: ${{ vars.TALARIA_RELEASE_KEY || secrets.TALARIA_RELEASE_KEY }}
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
 
       - name: Normalize configuration
         env:
-          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT || secrets.SITEHOST_SSH_PORT }}
-          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST || secrets.SITEHOST_SSH_HOST }}
-          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER || secrets.SITEHOST_SSH_USER }}
-          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT || secrets.SITEHOST_SSH_HOST_FINGERPRINT }}
-          SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ vars.SITEHOST_SSH_PRIVATE_KEY || secrets.SITEHOST_SSH_PRIVATE_KEY }}
-          SITEHOST_API_KEY_RAW: ${{ vars.SITEHOST_API_KEY || secrets.SITEHOST_API_KEY }}
+          SITEHOST_SSH_PORT_RAW: ${{ secrets.SITEHOST_SSH_PORT || vars.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ secrets.SITEHOST_SSH_HOST || vars.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ secrets.SITEHOST_SSH_USER || vars.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ secrets.SITEHOST_SSH_HOST_FINGERPRINT || vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY || vars.SITEHOST_SSH_PRIVATE_KEY }}
+          SITEHOST_API_KEY_RAW: ${{ secrets.SITEHOST_API_KEY || vars.SITEHOST_API_KEY }}
         run: |
           set -euo pipefail
           trim() {
@@ -337,8 +337,8 @@ jobs:
             GIT_REMOTE
           do
             if [[ -z "${!name:-}" ]]; then
-              echo "Missing ${name}. Set it as a variable or a secret on the ${DEPLOY_ENVIRONMENT} environment, the repository, or the organisation." >&2
-              echo "A variable overrides a secret. The environment overrides the repository, which overrides the organisation." >&2
+              echo "Missing ${name}. Set it on the ${DEPLOY_ENVIRONMENT} environment, the repository, or the organisation." >&2
+              echo "Use a secret for keys and a variable for host, user, and URL. A secret is used when both are set." >&2
               missing=1
             fi
           done
