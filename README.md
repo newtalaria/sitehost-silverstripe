@@ -10,7 +10,7 @@ Do these in order. Secrets and variables for the whole organisation live under *
 
 Set each name once. Inside secrets, and inside variables, GitHub uses the environment value, then the repository value, then the organisation value. When the same name is both a secret and a variable, the secret is used. Override a secret with a secret, and a variable with a variable.
 
-The container already has a git checkout and its own GitHub deploy key. Import the public half of `SITEHOST_SSH_PRIVATE_KEY` in SiteHost and attach it to each container SSH user. Database credentials stay on the container as `SS_DATABASE_SERVER`, `SS_DATABASE_PORT`, `SS_DATABASE_USERNAME`, `SS_DATABASE_PASSWORD`, and `SS_DATABASE_NAME`.
+The container already has a git checkout and its own GitHub deploy key. [Set up the SSH user](#set-up-the-ssh-user) covers creating the Actions login key, importing it in SiteHost, and storing the private half in GitHub. Database credentials stay on the container as `SS_DATABASE_SERVER`, `SS_DATABASE_PORT`, `SS_DATABASE_USERNAME`, `SS_DATABASE_PASSWORD`, and `SS_DATABASE_NAME`.
 
 ### 1. Organisation secrets
 
@@ -188,4 +188,145 @@ jobs:
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+```
+
+## Set up the SSH user
+
+Actions logs in as a container SSH user. Create one login key, put the public half on that user in SiteHost, and store the private half as the organisation secret `SITEHOST_SSH_PRIVATE_KEY`.
+
+| Key | Public half | Private half | Used for |
+| --- | --- | --- | --- |
+| Actions login key | SiteHost, on every container SSH user | Organisation secret `SITEHOST_SSH_PRIVATE_KEY` | Actions logs into the container |
+| Server host key | Already on the SiteHost server | Organisation variable `SITEHOST_SSH_HOST_FINGERPRINT` | Actions checks it reached your server |
+| GitHub deploy key | Already on the site repository | Already on the container | The container runs `git fetch` |
+
+Create the Actions login key once and attach it to every container. Leave the deploy key already on the container in place.
+
+### Create the login key
+
+```bash
+ssh-keygen -t ed25519 -f "$HOME/.ssh/sitehost-actions" -C "github-actions-sitehost"
+```
+
+Press Enter at both passphrase prompts. GitHub Actions cannot type a passphrase.
+
+```bash
+ls -l "$HOME/.ssh/sitehost-actions" "$HOME/.ssh/sitehost-actions.pub"
+```
+
+You should see `sitehost-actions` (private) and `sitehost-actions.pub` (public).
+
+### Add the public key in SiteHost
+
+```bash
+cat "$HOME/.ssh/sitehost-actions.pub"
+```
+
+Copy that line. It starts with `ssh-ed25519`.
+
+In the [SiteHost control panel](https://cp.sitehost.nz):
+
+1. Open **SSH Keys**.
+2. Click **Add SSH Key**.
+3. Paste the public key.
+4. Save.
+
+SiteHost copies that key onto any Cloud Container SSH user that selects it. See [SSH Key Syncing & Imported Keys](https://kb.sitehost.nz/cloud-containers/ssh-sftp-users/imported-keys).
+
+### Add the private key in GitHub
+
+```bash
+cat "$HOME/.ssh/sitehost-actions"
+```
+
+Copy the whole block, from `-----BEGIN OPENSSH PRIVATE KEY-----` through `-----END OPENSSH PRIVATE KEY-----`.
+
+1. Open the GitHub organisation, then **Settings**, then **Secrets and variables**, then **Actions**.
+2. Open **Secrets** and click **New organization secret**.
+3. Name: `SITEHOST_SSH_PRIVATE_KEY`.
+4. Paste the private key into **Secret**.
+5. Under **Repository access**, choose **Selected repositories** and add each site repository that will deploy.
+6. Click **Add secret**.
+
+GitHub lists the name and never shows the value again. You need permission to manage organisation secrets. Leave the local files until the login check below succeeds.
+
+### Attach the key to each container
+
+Do this for every container the workflow deploys, such as test and production. See [Managing SSH / SFTP Users](https://kb.sitehost.nz/cloud-containers/ssh-sftp-users/managing-users).
+
+1. Open **Containers**, then **SSH & SFTP**.
+2. Edit the existing SSH user and select the `github-actions-sitehost` key. If there is no user, click **Add User**, choose a username and password, tick the Actions key, select this server and this container, leave the config directory writable, and click **Add User**. Actions does not use the password.
+3. Wait until the progress indicator beside the user disappears.
+4. Open the user and note the username. That is `SITEHOST_SSH_USER` for this container's GitHub environment. The SSH host and port are the same for every container on this server. Note them once, as `SITEHOST_SSH_HOST` and `SITEHOST_SSH_PORT`.
+
+### Read the server host fingerprint
+
+A laptop that has already connected trusts the server through `~/.ssh/known_hosts`. A GitHub-hosted runner does not, so store the fingerprint once as `SITEHOST_SSH_HOST_FINGERPRINT`.
+
+Replace the address with `SITEHOST_SSH_HOST`:
+
+```bash
+ssh-keygen -F 203.0.113.10 | grep -v '^#' | ssh-keygen -lf -
+```
+
+The server keeps a host key for each algorithm, so this prints about three lines:
+
+```text
+256 SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa= 203.0.113.10 (ECDSA)
+256 SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb= 203.0.113.10 (ED25519)
+3072 SHA256:ccccccccccccccccccccccccccccccccccccccccccc= 203.0.113.10 (RSA)
+```
+
+From the line that ends in `(ECDSA)`, copy only the `SHA256:` field:
+
+```text
+SITEHOST_SSH_HOST_FINGERPRINT=SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=
+```
+
+The deploy client asks for the ECDSA key first. An ED25519 or RSA fingerprint fails that check. If the command prints nothing, connect with `ssh` once, accept the host key, and run it again. If there is no `(ECDSA)` line, use the `(RSA)` line.
+
+Store `SITEHOST_SSH_HOST`, `SITEHOST_SSH_PORT`, and `SITEHOST_SSH_HOST_FINGERPRINT` as organisation variables. Store `SITEHOST_SSH_USER` on the environment for that container.
+
+### Check the login
+
+Do this for each container before you delete the private key. Replace the username and host.
+
+```bash
+ssh -i "$HOME/.ssh/sitehost-actions" -p 22 exampletest@203.0.113.10
+```
+
+Type `yes` if it asks you to confirm the host key. A password prompt means the public key is not attached yet. A shell prompt means the login works.
+
+From that shell:
+
+```bash
+ls -la /container/application
+ls -la /container/backups/containers
+cd /container/application
+git remote -v
+git fetch origin
+command -v git composer php rsync gzip mysqldump mysql
+```
+
+`/container/application` should contain `public` and `.git`. `/container/backups/containers` should contain dated snapshot directories. Those paths are the defaults, so leave them out of GitHub unless this container uses different ones. If either listing fails, the SSH user is linked to more than this container. Use the directory under `$HOME/containers` that contains `.git`, and set `SITEHOST_APP_PATH` and `SITEHOST_BACKUP_ROOT` on that environment.
+
+`git remote -v` should show this site's GitHub repository, and `git fetch origin` should finish without a password. That uses the deploy key already on the container. Each `command -v` line should print a path. A missing `mysqldump` or `mysql` blocks a run with **Backup database** on. A missing `rsync` blocks a run with **Backup assets** on.
+
+When database backup will be on, confirm the database settings Silverstripe already uses. The first command prints the server, user, and database name. The second checks the password without printing it.
+
+```bash
+printenv SS_DATABASE_SERVER SS_DATABASE_USERNAME SS_DATABASE_NAME
+if [ -n "$SS_DATABASE_PASSWORD" ]; then echo "SS_DATABASE_PASSWORD is set"; else echo "SS_DATABASE_PASSWORD is missing"; fi
+```
+
+`SS_DATABASE_SERVER`, `SS_DATABASE_USERNAME`, `SS_DATABASE_NAME`, and `SS_DATABASE_PASSWORD` must all be set. If one is missing, add it on the container's environment screen in SiteHost, open a new SSH session, and check again.
+
+```bash
+exit
+```
+
+Delete the local key files after every container login succeeds:
+
+```bash
+rm "$HOME/.ssh/sitehost-actions" "$HOME/.ssh/sitehost-actions.pub"
 ```
