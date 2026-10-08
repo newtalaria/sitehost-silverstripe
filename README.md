@@ -8,7 +8,7 @@ Pin `@v1`.
 
 Create GitHub environments for each container before the first deploy, and add reviewers on the ones that need them. The first run that names an environment GitHub has not seen creates that environment with no protection.
 
-`secrets: inherit` passes the organisation and repository secrets. The caller permissions need `contents: read`.
+Pass the keys by name. `secrets: inherit` only reaches a reusable workflow in the same organisation, and this workflow lives in `newtalaria`. The caller permissions need `contents: read`.
 
 ```yaml
 name: Deploy to SiteHost
@@ -59,7 +59,10 @@ jobs:
       test_rollback: ${{ inputs.test_rollback }}
       require_main_or_tag: ${{ inputs.environment == 'production' }}
       upload_source_maps: true
-    secrets: inherit
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+      TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
 ```
 
 A site with another container adds that name to its own choice list and creates a GitHub environment with the same name. The shared workflow takes the string it is given. It does not treat `production` as special. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
@@ -117,7 +120,7 @@ Set each name once. GitHub applies environment, then repository, then organisati
 
 Organisation secrets, shared by the sites on that GitHub organisation:
 
-- `SITEHOST_SSH_PRIVATE_KEY` — the Actions login key. Import the public half in SiteHost and attach it to each container SSH user.
+- `SITEHOST_SSH_PRIVATE_KEY` — the Actions login key. Import the public half in SiteHost and attach it to each container SSH user. Repository access on that organisation secret must include the site repository. The caller passes this secret by name.
 - `SITEHOST_API_KEY` — only when `container_snapshot` is true. Give it the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` false until that works.
 - `TALARIA_RELEASE_KEY` — when one `releases:write` key uploads source maps for every site. Otherwise set that secret on the repository or on the environment.
 

@@ -89,6 +89,16 @@ on:
         type: boolean
         required: false
         default: true
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY:
+        description: Actions login key for the container SSH user.
+        required: false
+      SITEHOST_API_KEY:
+        description: SiteHost API key. Used only when container_snapshot is true.
+        required: false
+      TALARIA_RELEASE_KEY:
+        description: Talaria key with releases:write. Used when upload_source_maps is true.
+        required: false
 
 permissions:
   contents: read
@@ -171,20 +181,19 @@ jobs:
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
     env:
-      # Secret, then variable. Inside each store GitHub uses the environment,
-      # then the repository, then the organisation.
-      SITEHOST_APP_PATH: ${{ secrets.SITEHOST_APP_PATH || vars.SITEHOST_APP_PATH || '/container/application' }}
-      SITEHOST_BACKUP_ROOT: ${{ secrets.SITEHOST_BACKUP_ROOT || vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
-      SITEHOST_CLIENT_ID: ${{ secrets.SITEHOST_CLIENT_ID || vars.SITEHOST_CLIENT_ID }}
-      SITEHOST_SERVER: ${{ secrets.SITEHOST_SERVER || vars.SITEHOST_SERVER }}
-      SITEHOST_STACK: ${{ secrets.SITEHOST_STACK || vars.SITEHOST_STACK }}
-      SITEHOST_SERVICE: ${{ secrets.SITEHOST_SERVICE || vars.SITEHOST_SERVICE || secrets.SITEHOST_STACK || vars.SITEHOST_STACK }}
-      SITEHOST_CONTAINER: ${{ secrets.SITEHOST_CONTAINER || vars.SITEHOST_CONTAINER }}
+      # Variables. GitHub uses the environment, then the repository, then the organisation.
+      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_SHA: ${{ github.sha }}
       ROLLBACK_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       GIT_REMOTE: git@github.com:${{ github.repository }}.git
-      SITEHOST_SITE_URL: ${{ secrets.SITEHOST_SITE_URL || vars.SITEHOST_SITE_URL }}
+      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
       POLL_INTERVAL_SECONDS: "15"
 
     steps:
@@ -233,10 +242,10 @@ jobs:
 
       - name: Normalize configuration
         env:
-          SITEHOST_SSH_PORT_RAW: ${{ secrets.SITEHOST_SSH_PORT || vars.SITEHOST_SSH_PORT }}
-          SITEHOST_SSH_HOST_RAW: ${{ secrets.SITEHOST_SSH_HOST || vars.SITEHOST_SSH_HOST }}
-          SITEHOST_SSH_USER_RAW: ${{ secrets.SITEHOST_SSH_USER || vars.SITEHOST_SSH_USER }}
-          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ secrets.SITEHOST_SSH_HOST_FINGERPRINT || vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT }}
           SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY || vars.SITEHOST_SSH_PRIVATE_KEY }}
           SITEHOST_API_KEY_RAW: ${{ secrets.SITEHOST_API_KEY || vars.SITEHOST_API_KEY }}
         run: |
