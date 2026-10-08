@@ -4,11 +4,68 @@ Deploys one Silverstripe site onto a SiteHost container. The site repository kee
 
 Pin `@v1`.
 
-## Usage
+## Set up a site
 
-Create GitHub environments for each container before the first deploy, and add reviewers on the ones that need them. The first run that names an environment GitHub has not seen creates that environment with no protection.
+Do these in order. Secrets and variables for the whole organisation live under **Organisation → Settings → Secrets and variables → Actions**. A single site overrides them under **Repository → Settings → Secrets and variables → Actions**. Each container gets a GitHub environment under **Repository → Settings → Environments**.
 
-Pass the keys by name. `secrets: inherit` only reaches a reusable workflow in the same organisation, and this workflow lives in `newtalaria`. The caller permissions need `contents: read`.
+Set each name once. Inside secrets, and inside variables, GitHub uses the environment value, then the repository value, then the organisation value. When the same name is both a secret and a variable, the secret is used. Override a secret with a secret, and a variable with a variable.
+
+The container already has a git checkout and its own GitHub deploy key. Import the public half of `SITEHOST_SSH_PRIVATE_KEY` in SiteHost and attach it to each container SSH user. Database credentials stay on the container as `SS_DATABASE_SERVER`, `SS_DATABASE_PORT`, `SS_DATABASE_USERNAME`, `SS_DATABASE_PASSWORD`, and `SS_DATABASE_NAME`.
+
+### 1. Organisation secrets
+
+Shared by every site in the GitHub organisation. On each secret, set repository access to **All repositories**, or to **Selected repositories** and include this site. A secret that does not list the repository never reaches the deploy.
+
+| Name | When | Value |
+| --- | --- | --- |
+| `SITEHOST_SSH_PRIVATE_KEY` | Every deploy | The Actions login private key, including the `BEGIN` and `END` lines. |
+| `TALARIA_RELEASE_KEY` | Source maps | A Talaria key with `releases:write`. One key can serve every site. A site with its own key sets this secret on the repository or on the environment instead. |
+| `SITEHOST_API_KEY` | Container snapshots | SiteHost API key with the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` off until that works. |
+
+### 2. Organisation variables
+
+Shared by every container on one SiteHost server. Open the **Variables** tab on the same Actions settings page.
+
+| Name | When | Example |
+| --- | --- | --- |
+| `SITEHOST_SSH_HOST` | Every deploy | `203.0.113.10` |
+| `SITEHOST_SSH_HOST_FINGERPRINT` | Every deploy | `SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` |
+| `SITEHOST_SSH_PORT` | The SSH port is not 22 | `22` |
+| `SITEHOST_CLIENT_ID` | Container snapshots | `123456` |
+| `SITEHOST_SERVER` | Container snapshots | `ch-example` |
+
+### 3. Environment for each container
+
+Create the environment before the first deploy and add reviewers on the ones that need them. The environment name is the string the workflow sends, such as `test` or `production`. The first run that names an environment GitHub has not seen creates that environment with no protection.
+
+Open the environment and add these **variables**:
+
+| Name | When | Example |
+| --- | --- | --- |
+| `SITEHOST_SSH_USER` | Every deploy | `exampletest` |
+| `SITEHOST_STACK` | Every deploy | `test.example.com` |
+| `SITEHOST_SITE_URL` | Every deploy | `https://test.example.com` |
+
+`SITEHOST_SITE_URL` must start with `http://` or `https://`.
+
+These have defaults. Set them on the environment only when this container differs.
+
+| Name | Default |
+| --- | --- |
+| `SITEHOST_APP_PATH` | `/container/application` |
+| `SITEHOST_BACKUP_ROOT` | `/container/backups/containers` |
+| `SITEHOST_SERVICE` | `SITEHOST_STACK` |
+| `SITEHOST_CONTAINER` | Empty. Set it when the stack has more than one container. |
+
+### 4. Repository overrides
+
+Use the repository when one site differs from the organisation. Same names as above.
+
+A repository secret overrides an organisation secret. A repository variable overrides an organisation variable. An environment value overrides both.
+
+## Add the workflow
+
+Save this as `.github/workflows/deploy.yml` in the site repository. Pass the keys by name. `secrets: inherit` only reaches a reusable workflow in the same organisation, and this workflow lives in `newtalaria`.
 
 ```yaml
 name: Deploy to SiteHost
@@ -65,9 +122,11 @@ jobs:
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
 ```
 
-A site with another container adds that name to its own choice list and creates a GitHub environment with the same name. The shared workflow takes the string it is given. It does not treat `production` as special. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
+Another container is another name in `options` and another GitHub environment with that same name. The shared workflow takes the string it is given. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
-The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can deploy at the same time. Two deploys of one site to the same environment wait. Do not set that same group on the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group.
+The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can deploy at the same time. Two deploys of one site to the same environment wait. Leave that group off the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group.
+
+Run it from the Actions tab with **Run workflow**. Pick the environment, and turn on database and asset backups for a normal release.
 
 ## What each run can turn on
 
@@ -81,27 +140,26 @@ The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.
 | `require_main_or_tag` | `false` | Fail unless the ref is `main` or a tag. `emergency_override` deploys another ref. |
 | `container_snapshot` | `false` | SiteHost API container backup, snapshot pin, and snapshot rollback. |
 | `upload_source_maps` | `false` | Build source maps, upload them, and copy the rewritten script onto the theme path after checkout. |
+| `remote_build_script` | `./.scripts/build.sh` | Relative path with no `..`. The container runs it with `bash` after checkout. |
 
 ## What the deploy does
 
-The container already has a git checkout and its own GitHub deploy key. Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `SITEHOST_SSH_HOST_FINGERPRINT`.
+Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `SITEHOST_SSH_HOST_FINGERPRINT`.
 
-1. When a backup is on, dump the database and copy `public/assets` before changing files. The dump reads `SS_DATABASE_SERVER`, `SS_DATABASE_PORT`, `SS_DATABASE_USERNAME`, `SS_DATABASE_PASSWORD`, and `SS_DATABASE_NAME` from the container SSH session. Those values stay on the container.
+1. When a backup is on, dump the database and copy `public/assets` before changing files.
 2. Fetch the exact commit and check it out detached.
-3. Run the site build script. The default is `./.scripts/build.sh`.
+3. Run the site build script.
 4. Write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`.
 5. `supervisorctl restart php`.
-6. Request the site URL. The job allows 30 minutes for the remote deploy and 90 minutes overall.
+6. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
 
 A failed deploy restores the database dump and assets copy that this run wrote. The checked-out code stays in place. A successful deploy deletes those copies.
 
-`REMOTE_BUILD_SCRIPT` is a relative path with no `..`. The container runs it with `bash`.
-
 ## Source maps
 
-Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and `npm run build:sourcemap` on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
+Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and the source map command on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
 
-`TALARIA_RELEASE_KEY` is a Talaria key with `releases:write`. Set it as a secret. A variable is used only when no secret with that name is set.
+The site needs a `package-lock.json` because the job runs `npm ci`. Set `TALARIA_RELEASE_KEY` as in the organisation secrets table. A variable with that name is used only when no secret is set.
 
 | Input | Default |
 | --- | --- |
@@ -112,30 +170,8 @@ Turn on `upload_source_maps` for a theme script that Silverstripe combines. The 
 | `remote_script_dir` | `themes/default/javascript` |
 | `silverstripe_combine_files` | `true` |
 
-The site needs a `package-lock.json` because the job runs `npm ci`.
-
-## Secrets and variables
-
-Set each name once. GitHub applies environment, then repository, then organisation inside secrets, and the same order inside variables. This workflow uses the secret when both a secret and a variable exist. A repository variable does not override an organisation secret. Override a secret with a secret, and a variable with a variable.
-
-Organisation secrets, shared by the sites on that GitHub organisation:
-
-- `SITEHOST_SSH_PRIVATE_KEY` — the Actions login key. Import the public half in SiteHost and attach it to each container SSH user. Repository access on that organisation secret must include the site repository. The caller passes this secret by name.
-- `SITEHOST_API_KEY` — only when `container_snapshot` is true. Give it the cloud container and job modules. Leave Allowed IP Addresses empty. A GitHub-hosted runner changes address every job, and SiteHost rejects a key that does not list that address. Leave `container_snapshot` false until that works.
-- `TALARIA_RELEASE_KEY` — when one `releases:write` key uploads source maps for every site. Otherwise set that secret on the repository or on the environment.
-
-Organisation variables, shared by every container on one server: `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, `SITEHOST_SSH_HOST`, `SITEHOST_SSH_PORT`, `SITEHOST_SSH_HOST_FINGERPRINT`.
-
-Environment variables, one GitHub environment per container: `SITEHOST_SSH_USER`, `SITEHOST_STACK`, `SITEHOST_SITE_URL`.
-
-A repository value overrides the organisation for one site. Use a repository secret to override an organisation secret, and a repository variable to override an organisation variable. An environment value overrides both.
-
-`SITEHOST_APP_PATH` defaults to `/container/application`. `SITEHOST_BACKUP_ROOT` defaults to `/container/backups/containers`. `SITEHOST_SERVICE` defaults to `SITEHOST_STACK`. Set `SITEHOST_CONTAINER` only when the stack has more than one container.
-
-`SITEHOST_SITE_URL` must start with `http://` or `https://`.
-
 ## Container snapshots
 
-`container_snapshot` runs the SiteHost API backup, pins the new snapshot directory, and can roll the application files back from that pin. It also sets `TALARIA_RELEASE` through the API, which restarts the container. The `.env` write and `supervisorctl restart php` still run. Leave the input false while the API key rejects GitHub-hosted runner addresses.
+`container_snapshot` needs `SITEHOST_API_KEY`, `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, and `SITEHOST_STACK` from the tables above. It runs the SiteHost API backup, pins the new snapshot directory, and can roll the application files back from that pin. It also sets `TALARIA_RELEASE` through the API, which restarts the container. The `.env` write and `supervisorctl restart php` still run.
 
 The snapshot scripts record directory names and pin the one new directory. They do not follow a `latest` link.
