@@ -64,5 +64,27 @@ if [[ "$lib_count" != "1" ]]; then
   echo "expected lib.sh once in the payload, found ${lib_count}" >&2
   exit 1
 fi
+if [[ "$deploy_decoded" != *"install_talaria_runtime"* ]]; then
+  echo "remote deploy payload did not include the runtime health functions" >&2
+  exit 1
+fi
+runtime_count="$(printf '%s\n' "$deploy_decoded" | grep -c 'SITEHOST_RUNTIME_LOADED=1')"
+if [[ "$runtime_count" != "1" ]]; then
+  echo "expected runtime-health.sh once in the payload, found ${runtime_count}" >&2
+  exit 1
+fi
+
+# The container runs the payload on stdin, where BASH_SOURCE is unset.
+printf '%s' "$deploy_encoded" | base64 -d | /bin/bash >"${tmp}/deploy.out" 2>"${tmp}/deploy.err" || true
+if grep -q 'BASH_SOURCE' "${tmp}/deploy.err"; then
+  echo "piped deploy still evaluates BASH_SOURCE" >&2
+  cat "${tmp}/deploy.err" >&2
+  exit 1
+fi
+if ! grep -q 'SITEHOST_APP_PATH is required' "${tmp}/deploy.err"; then
+  echo "piped deploy did not reach the argument check" >&2
+  cat "${tmp}/deploy.err" >&2
+  exit 1
+fi
 
 echo "payload test passed"

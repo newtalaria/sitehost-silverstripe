@@ -7,8 +7,10 @@ if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
   # shellcheck disable=SC1091
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 fi
-# shellcheck disable=SC1091
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-health.sh"
+if [[ -z "${SITEHOST_RUNTIME_LOADED:-}" ]]; then
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-health.sh"
+fi
 
 : "${SITEHOST_APP_PATH:?SITEHOST_APP_PATH is required}"
 : "${GIT_REMOTE:?GIT_REMOTE is required}"

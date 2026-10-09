@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Re-apply the SiteHost probe and crontab check-ins after an image replacement.
-# Sourced by remote-deploy.sh. Opt-in when the app has talaria/sitehost/monitors.json
-# or TALARIA_INSTALL_PROBE is true.
+# ssh-payload.sh prepends this file onto the encoded deploy script, because that
+# script is piped into bash and has no path of its own. A file run directly
+# sources this file when SITEHOST_RUNTIME_LOADED is unset.
+# Opt-in when the app has talaria/sitehost/monitors.json or TALARIA_INSTALL_PROBE is true.
+
+export SITEHOST_RUNTIME_LOADED=1
 
 talaria_runtime_wanted() {
   if [[ "${TALARIA_INSTALL_PROBE:-}" == "true" ]]; then
