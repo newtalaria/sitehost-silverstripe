@@ -1,0 +1,88 @@
+# SiteHost logs preset for otelcol-contrib 0.162.0.
+# The deploy passes --set=exporters.otlp_http.endpoint=${TALARIA_DSN}/otlp
+# after this file, and after talaria/collector.yaml when that file exists.
+# The API key stays in the process environment.
+
+extensions:
+  file_storage:
+    directory: ${env:SITEHOST_APP_PATH}/.talaria/otelcol-storage
+    create_directory: true
+
+receivers:
+  file_log:
+    include:
+      - /container/logs/apache2/error.log
+      - /container/logs/php-fpm/*.log
+      - /container/logs/cron-*.log
+      - /container/logs/sitehost/sitehost.log
+    exclude:
+      - /container/logs/**/*.gz
+      - /container/logs/apache2/access.log
+      - /container/logs/apache2/other_vhosts_access.log
+      - /container/logs/rsyslog/*
+      - /container/logs/supervisor/*
+      - /container/logs/talaria-otelcol.log
+      - /container/logs/talaria-otelcol.err
+      - /container/logs/talaria-sitehost-probe.log
+      - /container/logs/talaria-sitehost-probe.err
+    start_at: end
+    storage: file_storage
+    operators:
+      - type: regex_parser
+        parse_from: body
+        regex: '\[(?:[^\]]*:)?(?P<level>notice|info|warn|warning|error|crit|alert|emerg|critical|debug)\]'
+        on_error: send_quiet
+      - type: regex_parser
+        parse_from: body
+        regex: '(?i)(?:^|\s)(?P<level>NOTICE|INFO|WARNING|WARN|ERROR|CRITICAL|CRIT|ALERT|EMERG|DEBUG)\s*:'
+        on_error: send_quiet
+      - type: severity_parser
+        parse_from: attributes.level
+        on_error: send_quiet
+        mapping:
+          info:
+            - notice
+            - info
+          warn:
+            - warn
+            - warning
+          error:
+            - error
+          fatal:
+            - crit
+            - alert
+            - emerg
+            - critical
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 25
+  resource:
+    attributes:
+      - key: service.name
+        value: ${env:TALARIA_SERVICE_NAME}
+        action: upsert
+      - key: container.name
+        value: ${env:TALARIA_CONTAINER_NAME}
+        action: upsert
+      - key: deployment.environment.name
+        value: ${env:TALARIA_ENVIRONMENT}
+        action: upsert
+  batch: {}
+
+exporters:
+  otlp_http:
+    endpoint: http://127.0.0.1:1
+    headers:
+      X-API-Key: ${env:TALARIA_API_KEY}
+    compression: gzip
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [file_log]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_http]

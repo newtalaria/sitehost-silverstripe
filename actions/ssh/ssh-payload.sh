@@ -34,6 +34,9 @@ base="$(basename "$src")"
 if [[ -f "${src_dir}/lib.sh" && "$base" != "lib.sh" ]]; then
   parts+=("${src_dir}/lib.sh")
 fi
+if [[ -f "${src_dir}/collector.sh" && "$base" != "collector.sh" ]]; then
+  parts+=("${src_dir}/collector.sh")
+fi
 if [[ -f "${src_dir}/runtime-health.sh" && "$base" != "runtime-health.sh" ]]; then
   parts+=("${src_dir}/runtime-health.sh")
 fi
@@ -41,6 +44,19 @@ if [[ "${#parts[@]}" -gt 0 ]]; then
   cat "${parts[@]}" "$src" > "$body"
 else
   cat "$src" > "$body"
+fi
+
+# The remote bash process has no checkout of this action. Embed the preset
+# when the collector adapter is part of the payload.
+payload_root="$(cd "$(dirname "$0")/../.." && pwd)"
+preset="${payload_root}/collector/preset.yaml"
+if [[ -f "${src_dir}/collector.sh" && "$base" != "collector.sh" && -f "$preset" ]]; then
+  preset_b64="$(base64 < "$preset" | tr -d '\n')"
+  {
+    printf "TALARIA_COLLECTOR_PRESET_B64='%s'\n" "$preset_b64"
+    cat "$body"
+  } > "${body}.with-preset"
+  mv "${body}.with-preset" "$body"
 fi
 
 encoded="$(base64 < "$body" | tr -d '\n')"

@@ -8,6 +8,11 @@
 
 export SITEHOST_RUNTIME_LOADED=1
 
+if [[ -z "${SITEHOST_COLLECTOR_LOADED:-}" && -n "${BASH_SOURCE[0]:-}" ]]; then
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/collector.sh"
+fi
+
 talaria_runtime_wanted() {
   if [[ "${TALARIA_INSTALL_PROBE:-}" == "true" ]]; then
     return 0
@@ -25,4 +30,5 @@ install_talaria_runtime() {
     exit 1
   fi
   "$installer" install
+  install_talaria_collector
 }

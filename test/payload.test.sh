@@ -64,8 +64,18 @@ if [[ "$lib_count" != "1" ]]; then
   echo "expected lib.sh once in the payload, found ${lib_count}" >&2
   exit 1
 fi
-if [[ "$deploy_decoded" != *"install_talaria_runtime"* ]]; then
+if [[ "$deploy_decoded" != *"install_talaria_runtime"* || "$deploy_decoded" != *"install_talaria_collector"* ]]; then
   echo "remote deploy payload did not include the runtime health functions" >&2
+  exit 1
+fi
+preset_b64="$(printf '%s\n' "$deploy_decoded" | sed -n "s/^TALARIA_COLLECTOR_PRESET_B64='\\(.*\\)'$/\\1/p")"
+if [[ -z "$preset_b64" ]]; then
+  echo "remote deploy payload did not embed the collector preset" >&2
+  exit 1
+fi
+printf '%s' "$preset_b64" | base64 -d > "${tmp}/preset.yaml"
+if ! cmp -s "${tmp}/preset.yaml" "${root}/collector/preset.yaml"; then
+  echo "embedded collector preset does not match collector/preset.yaml" >&2
   exit 1
 fi
 if [[ "$deploy_decoded" != *"vendor/bin/talaria-sitehost"* || "$deploy_decoded" != *'"$installer" install'* ]]; then

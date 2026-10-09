@@ -95,10 +95,10 @@ on:
         description: Talaria key with releases:write. Used when upload_source_maps is true.
         required: false
       TALARIA_DSN:
-        description: Talaria API origin for job check-ins. Used when monitors.json is present.
+        description: Talaria API origin for job check-ins and the log collector. Used when monitors.json is present.
         required: false
       TALARIA_API_KEY:
-        description: Talaria key with monitors:write. Used when monitors.json is present.
+        description: Talaria key with monitors:write and logs:write. Used when monitors.json is present.
         required: false
 
 permissions:
