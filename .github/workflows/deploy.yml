@@ -94,6 +94,12 @@ on:
       TALARIA_RELEASE_KEY:
         description: Talaria key with releases:write. Used when upload_source_maps is true.
         required: false
+      TALARIA_DSN:
+        description: Talaria API origin for job check-ins. Used when monitors.json is present.
+        required: false
+      TALARIA_API_KEY:
+        description: Talaria key with monitors:write. Used when monitors.json is present.
+        required: false
 
 permissions:
   contents: read
@@ -422,8 +428,8 @@ jobs:
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
-          TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
-          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
+          TALARIA_DSN: ${{ secrets.TALARIA_DSN || vars.TALARIA_DSN }}
+          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
           TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
           BACKUP_DATABASE: ${{ inputs.backup_database }}

@@ -115,7 +115,11 @@ jobs:
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+      TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
+      TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
 ```
+
+Pass `TALARIA_DSN` and `TALARIA_API_KEY` in that map. GitHub leaves an environment secret empty inside this workflow when the caller does not pass it, and the run does not report an error.
 
 Another container is another name in `options` and another GitHub environment with that same name. The shared workflow takes the string it is given. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
@@ -189,6 +193,8 @@ jobs:
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+      TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
+      TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
 ```
 
 ## Set up the SSH user
