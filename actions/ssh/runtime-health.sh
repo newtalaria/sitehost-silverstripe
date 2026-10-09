@@ -63,8 +63,9 @@ install_talaria_runtime() {
 install_talaria_crontab() {
   local spec="${SITEHOST_APP_PATH}/talaria/sitehost/monitors.json"
   local cron_file="/container/crontabs/crontab"
-  local url="${TALARIA_DSN:-}"
-  local key="${TALARIA_API_KEY:-}"
+  local url key
+  url="$(printf '%s' "${TALARIA_DSN:-}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  key="$(printf '%s' "${TALARIA_API_KEY:-}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   local token_file="${SITEHOST_APP_PATH}/.talaria-monitor-tokens"
   [[ -f "$spec" ]] || return 0
   [[ -n "$url" && -n "$key" ]] || {
@@ -114,18 +115,42 @@ if sys.argv[5]:
 print(json.dumps(body))
 PY
 )"
-      response="$(curl -fsS -m 20 -X POST \
+      response="$(curl -sS -m 20 -X POST \
         -H "Content-Type: application/json" \
         -H "X-API-Key: ${key}" \
+        --write-out $'\n%{http_code}' \
         -d "$body" \
-        "${url%/}/monitors/checkIn" || true)"
+        "${url%/}/monitors/checkIn" || printf '\n000')"
+      local http_code="${response##*$'\n'}"
+      response="${response%$'\n'*}"
       revealed="$(printf '%s' "$response" | python3 -c 'import json,sys
 raw=sys.stdin.read()
 try:
     data=json.loads(raw)
 except Exception:
     data={}
-print(data.get("pingToken") or data.get("result",{}).get("pingToken") or "")')"
+token=data.get("pingToken") or ""
+if not token and isinstance(data.get("result"), dict):
+    token=data["result"].get("pingToken") or ""
+print(token)')"
+      if [[ -z "$revealed" ]]; then
+        local detail
+        detail="$(printf '%s' "$response" | python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+try:
+    data=json.loads(raw)
+except Exception:
+    print(raw[:300])
+    raise SystemExit
+message=""
+inner=data.get("data")
+if isinstance(inner, dict):
+    message=inner.get("message") or ""
+if not message:
+    message=data.get("message") or ""
+print((message or raw)[:300])')"
+        echo "Check-in for ${slug} failed: HTTP ${http_code} ${detail}"
+      fi
       if [[ -n "$revealed" ]]; then
         printf '%s=%s\n' "$slug" "$revealed" >> "$token_file"
         token="$revealed"
