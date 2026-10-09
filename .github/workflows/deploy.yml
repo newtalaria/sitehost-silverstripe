@@ -422,13 +422,16 @@ jobs:
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
+          TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
+          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
+          TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
           BACKUP_DATABASE: ${{ inputs.backup_database }}
           BACKUP_ASSETS: ${{ inputs.backup_assets }}
         with:
           script: remote-deploy.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_DSN TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
 
       - name: Set TALARIA_RELEASE
         id: set-release

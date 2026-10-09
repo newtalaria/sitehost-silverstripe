@@ -20,6 +20,8 @@ Shared by every site in the GitHub organisation. On each secret, set repository 
 | --- | --- | --- |
 | `SITEHOST_SSH_PRIVATE_KEY` | Every deploy | The Actions login private key, including the `BEGIN` and `END` lines. |
 | `TALARIA_RELEASE_KEY` | Source maps | A Talaria key with `releases:write`. One key can serve every site. A site with its own key sets this secret on the repository or on the environment instead. |
+| `TALARIA_DSN` | Job check-ins | API origin, for example `https://api.newtalaria.com`. Used only when the site contains `talaria/sitehost/monitors.json`. |
+| `TALARIA_API_KEY` | Job check-ins | A project key with `monitors:write`. The deploy registers each job once and writes a ping token into the crontab. The token is not this key. |
 
 ### 2. Organisation variables
 

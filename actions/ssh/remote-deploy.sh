@@ -7,6 +7,8 @@ if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
   # shellcheck disable=SC1091
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 fi
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-health.sh"
 
 : "${SITEHOST_APP_PATH:?SITEHOST_APP_PATH is required}"
 : "${GIT_REMOTE:?GIT_REMOTE is required}"
@@ -241,6 +243,7 @@ gitc checkout --force --detach "$DEPLOY_SHA"
 delete_other_branches
 build_site
 write_talaria_release
+install_talaria_runtime
 restart_php
 echo "Deployed ${DEPLOY_SHA} at ${SITEHOST_APP_PATH}"
 gitc rev-parse HEAD
