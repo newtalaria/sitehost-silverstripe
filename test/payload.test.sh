@@ -68,6 +68,14 @@ if [[ "$deploy_decoded" != *"install_talaria_runtime"* ]]; then
   echo "remote deploy payload did not include the runtime health functions" >&2
   exit 1
 fi
+if [[ "$deploy_decoded" != *"vendor/bin/talaria-sitehost"* || "$deploy_decoded" != *'"$installer" install'* ]]; then
+  echo "remote deploy payload did not invoke talaria-sitehost install" >&2
+  exit 1
+fi
+if [[ "$deploy_decoded" == *"python3"* ]]; then
+  echo "remote deploy payload still shells out to python3" >&2
+  exit 1
+fi
 runtime_count="$(printf '%s\n' "$deploy_decoded" | grep -c 'SITEHOST_RUNTIME_LOADED=1')"
 if [[ "$runtime_count" != "1" ]]; then
   echo "expected runtime-health.sh once in the payload, found ${runtime_count}" >&2
