@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Restores one container's application files from a pinned snapshot, then the
-# pre-deploy database dump when that dump exists. Does not follow "latest".
+# Restores one container's application files from a pinned snapshot directory.
+# When RESTORE_SNAPSHOT_DATABASE=true, also restores databases/<name>.sql.gz
+# from that directory. Does not follow "latest" and does not remove the local
+# mysqldump under /container/logs. That dump belongs to the local restore path.
 set -euo pipefail
 
 if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
@@ -13,7 +15,6 @@ fi
 
 log_dir="${DEPLOY_LOG_DIR:-/container/logs}"
 pinned_file="${log_dir}/deploy-snapshot-path.txt"
-dump="${log_dir}/deploy-rollback.sql.gz"
 defaults=""
 
 # Remove the temporary MySQL defaults file when the script exits.
@@ -56,7 +57,16 @@ if [[ "$SNAPSHOT_PATH" == "$SITEHOST_APP_PATH" ]]; then
   exit 1
 fi
 
+if [[ -L "$SNAPSHOT_PATH" ]]; then
+  echo "Refusing to roll back from a symlinked snapshot" >&2
+  exit 1
+fi
+
 app_snapshot="${SNAPSHOT_PATH}/application"
+if [[ -L "$app_snapshot" ]]; then
+  echo "Refusing to roll back from a symlinked application directory" >&2
+  exit 1
+fi
 if [[ ! -d "$app_snapshot" ]]; then
   echo "Snapshot application directory not found: ${app_snapshot}" >&2
   exit 1
@@ -77,21 +87,41 @@ fi
 echo "Restoring application files from ${app_snapshot}"
 rsync --archive --stats --delete "${app_snapshot}/" "${SITEHOST_APP_PATH}/"
 
-if [[ -f "$dump" ]]; then
+# Restore the database SiteHost stored inside this snapshot.
+# The dump name is the Silverstripe database name plus .sql.gz.
+restore_snapshot_database() {
+  local db_dir dump_file
   require_database_env restore
+  if [[ ! "$SS_DATABASE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,128}$ ]]; then
+    echo "SS_DATABASE_NAME cannot be used as a snapshot dump filename." >&2
+    exit 1
+  fi
+  db_dir="${SNAPSHOT_PATH}/databases"
+  dump_file="${db_dir}/${SS_DATABASE_NAME}.sql.gz"
+  if [[ -L "$dump_file" || ! -f "$dump_file" ]]; then
+    echo "Snapshot database dump not found: ${dump_file}" >&2
+    if [[ -d "$db_dir" ]]; then
+      echo "Database dumps in this snapshot:" >&2
+      find "$db_dir" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; >&2
+    fi
+    exit 1
+  fi
   if ! command -v mysql >/dev/null 2>&1 || ! command -v gzip >/dev/null 2>&1; then
-    echo "mysql and gzip are required to restore the database" >&2
+    echo "mysql and gzip are required to restore the snapshot database" >&2
     exit 1
   fi
   write_mysql_defaults
-  echo "Restoring database from ${dump}"
-  gunzip -c "$dump" | mysql \
+  echo "Restoring database ${SS_DATABASE_NAME} on ${SS_DATABASE_SERVER} from ${dump_file}"
+  gunzip -c "$dump_file" | mysql \
     --defaults-file="$defaults" \
     --host="$SS_DATABASE_SERVER" \
     --protocol=TCP \
     "$SS_DATABASE_NAME"
-  rm -f "$dump"
-  echo "Database restore completed"
+  echo "Snapshot database restore completed"
+}
+
+if [[ "${RESTORE_SNAPSHOT_DATABASE:-}" == "true" ]]; then
+  restore_snapshot_database
 else
-  echo "No database dump at ${dump}; skipped database restore"
+  echo "Left the snapshot database in place. The local database backup covers this run."
 fi

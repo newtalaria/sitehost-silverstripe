@@ -1,6 +1,6 @@
 # Silverstripe deploy on SiteHost
 
-Deploys one Silverstripe site onto a SiteHost container. The site repository keeps a short workflow for the Actions form. This repository runs the deploy, the database and `public/assets` backups, and the restore.
+Deploys one Silverstripe site onto a SiteHost container. The site repository keeps a short workflow for the Actions form. This repository runs the deploy, the backups, and the restore.
 
 Pin `@v1`.
 
@@ -22,6 +22,7 @@ Shared by every site in the GitHub organisation. On each secret, set repository 
 | `TALARIA_RELEASE_KEY` | Source maps | A Talaria key with `releases:write`. One key can serve every site. A site with its own key sets this secret on the repository or on the environment instead. |
 | `TALARIA_DSN` | Job check-ins and container logs | API origin, for example `https://api.newtalaria.com`. Used when the site contains `talaria/sitehost/monitors.json`. The collector exporter is this origin plus `/otlp`. |
 | `TALARIA_API_KEY` | Job check-ins and container logs | A project key with `monitors:write` and `logs:write`. The deploy runs `vendor/bin/talaria-sitehost install`, which registers each job once and rewrites one crontab block. The same deploy starts the log collector. The key stays in the environment. The ping token is not this key. |
+| `SITEHOST_API_KEY` | SiteHost API backup | The account API key from the SiteHost control panel. Leave the key's IP allowlist empty. A key with any address listed rejects a GitHub-hosted runner, because that address changes on every job. |
 
 ### 2. Organisation variables
 
@@ -32,6 +33,10 @@ Shared by every container on one SiteHost server. Open the **Variables** tab on 
 | `SITEHOST_SSH_HOST` | Every deploy | `203.0.113.10` |
 | `SITEHOST_SSH_HOST_FINGERPRINT` | Every deploy | `SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` |
 | `SITEHOST_SSH_PORT` | The SSH port is not 22 | `22` |
+| `SITEHOST_CLIENT_ID` | SiteHost API backup | `17` |
+| `SITEHOST_SERVER` | SiteHost API backup | `ch-servername` |
+
+`SITEHOST_SERVER` is the server name in the SiteHost API. It is not the SSH address.
 
 ### 3. Environment for each container
 
@@ -44,6 +49,9 @@ Open the environment and add these **variables**:
 | `SITEHOST_SSH_USER` | Every deploy | `exampletest` |
 | `SITEHOST_STACK` | Every deploy | `test.example.com` |
 | `SITEHOST_SITE_URL` | Every deploy | `https://test.example.com` |
+| `SITEHOST_CONTAINER` | SiteHost API backup | `example.nz` |
+
+`SITEHOST_CONTAINER` is the container name. The API backup sends it as `containers[0]`. A stack can hold more than one container, and this action does not back up the stack without that name.
 
 `SITEHOST_SITE_URL` must start with `http://` or `https://`.
 
@@ -92,6 +100,10 @@ on:
         description: Backup assets
         type: boolean
         default: true
+      container_snapshot:
+        description: Back up this container through the SiteHost API
+        type: boolean
+        default: false
       test_rollback:
         description: Test rollback
         type: boolean
@@ -109,11 +121,13 @@ jobs:
       cleanup_stale_branches: ${{ inputs.cleanup_stale_branches }}
       backup_database: ${{ inputs.backup_database }}
       backup_assets: ${{ inputs.backup_assets }}
+      container_snapshot: ${{ inputs.container_snapshot }}
       test_rollback: ${{ inputs.test_rollback }}
       require_main_or_tag: ${{ inputs.environment == 'production' }}
       upload_source_maps: true
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
       TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
@@ -125,7 +139,7 @@ Another container is another name in `options` and another GitHub environment wi
 
 The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can deploy at the same time. Two deploys of one site to the same environment wait. Leave that group off the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group.
 
-Run it from the Actions tab with **Run workflow**. Pick the environment. Database and asset backups are already on.
+Run it from the Actions tab with **Run workflow**. Pick the environment. Database and asset backups are already on. The SiteHost API backup stays off until you turn `container_snapshot` on.
 
 ## What each run can turn on
 
@@ -134,6 +148,7 @@ Run it from the Actions tab with **Run workflow**. Pick the environment. Databas
 | `environment` | required | GitHub environment for this container. Reviewers, secrets, variables, and deployment branches are the ones on that environment. |
 | `backup_database` | `true` | `mysqldump` of the Silverstripe database on the container before any file changes. Restore runs if deploy, the smoke check, or the rollback test fails. |
 | `backup_assets` | `true` | Copy `public/assets` on the container before any file changes. Restored on the same failures. |
+| `container_snapshot` | `false` | SiteHost API backup of this container before any file changes. On failure, restore that container from the snapshot directory the backup created. |
 | `cleanup_stale_branches` | `false` | Delete local branches on the container after the detached checkout. |
 | `test_rollback` | `false` | Finish the deploy, then fail so the backups from this run are restored. |
 | `require_main_or_tag` | `false` | Fail unless the ref is `main` or a tag. `emergency_override` deploys another ref. |
@@ -143,16 +158,42 @@ Run it from the Actions tab with **Run workflow**. Pick the environment. Databas
 
 Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `SITEHOST_SSH_HOST_FINGERPRINT`.
 
-1. Dump the database and copy `public/assets` on the container before changing files. Turn either input off to skip that copy.
-2. Fetch the exact commit and check it out detached.
-3. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
-4. Write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`.
-5. `supervisorctl restart php`.
-6. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
+1. When `container_snapshot` is on, back up this container through the SiteHost API and record the new snapshot directory. The deploy does not continue until that backup finishes.
+2. Dump the database and copy `public/assets` on the container before changing files. Turn either input off to skip that copy.
+3. Fetch the exact commit and check it out detached.
+4. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
+5. Write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`.
+6. `supervisorctl restart php`.
+7. When `container_snapshot` is on, write those two values through the SiteHost environment API. SiteHost restarts the container to apply them.
+8. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
 
-The dump is `mysqldump` of the Silverstripe database, gzipped, and the assets copy is `rsync` of `public/assets`. Both are written on the container, under `/container/logs`, before git fetch. A failed deploy, smoke check, or rollback test restores the copies this run wrote. The checked-out code stays in place. A successful deploy deletes those copies.
+## Backups
 
-The SiteHost API can snapshot a container, and `container_snapshot` stays off. The API key only accepts listed hosts, and a GitHub-hosted runner uses a new address on every job.
+The local copies and the SiteHost API backup are separate inputs. Both can be on for the same deploy. Leave `container_snapshot` off until you have run it against one container.
+
+### On the container
+
+`backup_database` dumps the Silverstripe database with `mysqldump`. `backup_assets` copies `public/assets` with `rsync`. Both are written under `/container/logs` before git fetch. A failed deploy, smoke check, or rollback test restores those copies. The checked-out code stays in place. A successful deploy deletes the copies.
+
+### Through the SiteHost API
+
+`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for one container. The request sends `containers[0]` set to `SITEHOST_CONTAINER`. Leaving that list empty backs up every container on the stack, so the action stops when the name is missing.
+
+The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost then adds one directory under `/container/backups/containers/`. The directory name is the id this action restores from. The run lists the directories before the backup and keeps the single new one. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
+
+A container backup holds `application`, `config`, `crontabs`, and, on a web container, `databases/<database>.sql.gz`. A failed deploy, smoke check, or rollback test restores `application` from the pinned directory. `config` stays as it is. The database file in the snapshot is restored when this run did not take its own `mysqldump`. The expected file is `databases/<SS_DATABASE_NAME>.sql.gz`.
+
+[`/server/snapshot`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fserver%2Fsnapshot%2Frestore) is a disk snapshot of the whole server and has its own numeric id. Restoring it rolls the server back. This action does not call it.
+
+On a managed server the control panel Backups tab can restore the same directory. That restore covers the website files. The database is the dump in `databases/`.
+
+`talaria-sitehost install` can rewrite the container crontab during the deploy. The snapshot rollback returns the application files and, when this run did not dump the database itself, the database. The crontab written during the deploy stays in place.
+
+The API key is `SITEHOST_API_KEY`, with no IP address on the key. `SITEHOST_CLIENT_ID` and `SITEHOST_SERVER` are the account and the API server name. `SITEHOST_CONTAINER` is set on the environment for that container.
+
+### Both
+
+The API backup runs first. The database dump and the assets copy run immediately before git fetch. On failure the application files come back from the snapshot, then the local database dump and assets copy are applied over that. The local copies are taken later, so they are the ones restored for the database and `public/assets`.
 
 ## Source maps
 
@@ -181,6 +222,7 @@ jobs:
       cleanup_stale_branches: ${{ inputs.cleanup_stale_branches }}
       backup_database: ${{ inputs.backup_database }}
       backup_assets: ${{ inputs.backup_assets }}
+      container_snapshot: ${{ inputs.container_snapshot }}
       test_rollback: ${{ inputs.test_rollback }}
       require_main_or_tag: ${{ inputs.environment == 'production' }}
       upload_source_maps: true
@@ -192,6 +234,7 @@ jobs:
       silverstripe_combine_files: true
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
       TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}

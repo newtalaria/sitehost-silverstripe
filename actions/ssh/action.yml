@@ -38,6 +38,10 @@ inputs:
     description: poll-job timeout in seconds. Omit to use the script default.
     required: false
     default: ""
+  capture_stdout:
+    description: Return remote stdout. The snapshot pin prints snapshot_id on stdout.
+    required: false
+    default: "false"
 outputs:
   job_type:
     description: SiteHost job type returned by a local API command.
@@ -45,6 +49,9 @@ outputs:
   job_id:
     description: SiteHost job id returned by a local API command.
     value: ${{ steps.api.outputs.job_id }}
+  stdout:
+    description: Remote stdout when capture_stdout is true.
+    value: ${{ steps.remote.outputs.stdout }}
 runs:
   using: composite
   steps:
@@ -82,6 +89,7 @@ runs:
         echo "payload_path=${PAYLOAD_PATH}" >> "$GITHUB_OUTPUT"
 
     - name: Run remote script
+      id: remote
       if: success() && inputs.script != 'sitehost-api.sh'
       uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
       with:
@@ -92,6 +100,7 @@ runs:
         fingerprint: ${{ env.SITEHOST_SSH_HOST_FINGERPRINT }}
         command_timeout: ${{ inputs.command_timeout }}
         script_path: ${{ steps.payload.outputs.payload_path }}
+        capture_stdout: ${{ inputs.capture_stdout }}
 
     - name: Run SiteHost API command
       id: api

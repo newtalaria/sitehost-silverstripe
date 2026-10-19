@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SiteHost API v1.5 helper for container backup, release env updates, and job polling.
+# SiteHost API v1.5 helper for one container backup, release env updates, and job polling.
+# The backup call returns a scheduler job. That job id is not a restore handle.
 # Reads secrets from the environment and does not print the API key.
 set -euo pipefail
 
@@ -112,27 +113,49 @@ job_from_body() {
   write_job_outputs "$job_type" "$job_id"
 }
 
-# Ask SiteHost to back up this stack and return the scheduled job.
+# Reject a value this helper will not put in an API form.
+assert_api_name() {
+  local label="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,128}$ ]]; then
+    echo "${label} must use letters, numbers, dots, underscores, and hyphens." >&2
+    exit 1
+  fi
+}
+
+# Ask SiteHost to back up one container and return the scheduled job.
+# POST /cloud/stack/backup accepts containers[0]. Omitting it backs up every
+# container on the stack, so this command requires SITEHOST_CONTAINER.
 cmd_backup() {
   require_env SITEHOST_API_KEY
   require_env SITEHOST_CLIENT_ID
   require_env SITEHOST_SERVER
   require_env SITEHOST_STACK
+  require_env SITEHOST_CONTAINER
   require_env BACKUP_LABEL
 
-  local -a form=(
-    --form "apikey=${SITEHOST_API_KEY}"
-    --form "client_id=${SITEHOST_CLIENT_ID}"
-    --form "server=${SITEHOST_SERVER}"
-    --form "name=${SITEHOST_STACK}"
-    --form "params[label]=${BACKUP_LABEL}"
-  )
-  if [[ -n "${SITEHOST_CONTAINER:-}" ]]; then
-    form+=(--form "containers[0]=${SITEHOST_CONTAINER}")
+  if [[ ! "$SITEHOST_CLIENT_ID" =~ ^[0-9]{1,12}$ ]]; then
+    echo "SITEHOST_CLIENT_ID must be the numeric client id." >&2
+    exit 1
+  fi
+  assert_api_name "SITEHOST_SERVER" "$SITEHOST_SERVER"
+  assert_api_name "SITEHOST_STACK" "$SITEHOST_STACK"
+  assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
+  if [[ ! "$BACKUP_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$ ]]; then
+    echo "BACKUP_LABEL must be 1 to 180 characters: letters, numbers, dots, underscores, and hyphens." >&2
+    exit 1
   fi
 
+  echo "Requesting a SiteHost backup of container ${SITEHOST_CONTAINER} on server ${SITEHOST_SERVER}, stack ${SITEHOST_STACK}, label ${BACKUP_LABEL}"
+
   local body
-  body="$(sitehost_request POST "/cloud/stack/backup.json" "${form[@]}")"
+  body="$(sitehost_request POST "/cloud/stack/backup.json" \
+    --form "apikey=${SITEHOST_API_KEY}" \
+    --form "client_id=${SITEHOST_CLIENT_ID}" \
+    --form "server=${SITEHOST_SERVER}" \
+    --form "name=${SITEHOST_STACK}" \
+    --form "containers[0]=${SITEHOST_CONTAINER}" \
+    --form "params[label]=${BACKUP_LABEL}")"
   job_from_body "$body"
 }
 

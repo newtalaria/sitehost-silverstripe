@@ -49,6 +49,7 @@ record_snapshots() {
 }
 
 # Keep the single new snapshot directory and store its path for rollback.
+# The directory name is the restore id. The API job id is only the scheduler task.
 pin_snapshot() {
   if [[ ! -f "$before_file" ]]; then
     echo "Missing snapshot list from before the backup: ${before_file}" >&2
@@ -67,6 +68,10 @@ pin_snapshot() {
   fi
   name="$(printf '%s\n' "$new_names" | sed '/^$/d')"
   assert_snapshot_name "$name"
+  if [[ "$name" == "latest" ]]; then
+    echo "Refusing to pin a snapshot named latest" >&2
+    exit 1
+  fi
   path="${SITEHOST_BACKUP_ROOT%/}/${name}"
   if [[ ! -d "${path}/application" ]]; then
     echo "Pinned snapshot has no application directory: ${path}/application" >&2
@@ -77,7 +82,8 @@ pin_snapshot() {
     exit 1
   fi
   printf '%s\n' "$path" > "$pinned_file"
-  echo "Pinned snapshot ${path}"
+  echo "Pinned snapshot ${path}" >&2
+  printf 'snapshot_id=%s\n' "$name"
 }
 
 # Delete the temporary snapshot list, pinned path, and database dump after a successful deploy.

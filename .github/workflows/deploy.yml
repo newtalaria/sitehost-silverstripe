@@ -44,8 +44,9 @@ on:
         default: false
       container_snapshot:
         description: >-
-          SiteHost API container snapshot. Stays false. The API key allowlist
-          cannot list a GitHub-hosted runner, because that address changes every job.
+          Back up this one container through the SiteHost API before changing
+          files. Default is false while that path is tested alongside the local
+          database and assets backups. The API key must have no IP allowlist.
         type: boolean
         required: false
         default: false
@@ -89,7 +90,8 @@ on:
         description: Actions login key for the container SSH user.
         required: false
       SITEHOST_API_KEY:
-        description: SiteHost API key. Used only when container_snapshot is true.
+        description: >-
+          SiteHost API key with no IP allowlist. Used when container_snapshot is true.
         required: false
       TALARIA_RELEASE_KEY:
         description: Talaria key with releases:write. Used when upload_source_maps is true.
@@ -100,6 +102,12 @@ on:
       TALARIA_API_KEY:
         description: Talaria key with monitors:write and logs:write. Used when monitors.json is present.
         required: false
+    outputs:
+      snapshot_id:
+        description: >-
+          Directory name of the SiteHost container backup for this run.
+          Empty when container_snapshot is off or the backup did not finish.
+        value: ${{ jobs.deploy.outputs.snapshot_id }}
 
 permissions:
   contents: read
@@ -179,6 +187,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
+    outputs:
+      snapshot_id: ${{ steps.snapshot.outputs.snapshot_id }}
     env:
       # Variables. GitHub uses the environment, then the repository, then the organisation.
       SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
@@ -354,9 +364,34 @@ jobs:
             exit 1
           fi
 
+      - name: Check SiteHost API configuration
+        if: inputs.container_snapshot
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            SITEHOST_API_KEY \
+            SITEHOST_CLIENT_ID \
+            SITEHOST_SERVER \
+            SITEHOST_STACK \
+            SITEHOST_CONTAINER \
+            SITEHOST_BACKUP_ROOT
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing ${name}. The SiteHost API backup needs it on the ${DEPLOY_ENVIRONMENT} environment, the repository, or the organisation." >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "SITEHOST_SERVER is the API server name, such as ch-servername, not the SSH address." >&2
+            echo "SITEHOST_CONTAINER is this container. The backup sends it as containers[0]." >&2
+            echo "Leave the API key IP allowlist empty. A listed address rejects GitHub-hosted runners." >&2
+            exit 1
+          fi
+
       - name: Record existing snapshots
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           SNAPSHOT_MODE: record
         with:
@@ -367,16 +402,16 @@ jobs:
       - name: Start container backup
         id: backup
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
-          BACKUP_LABEL: predeploy-${{ github.sha }}
+          BACKUP_LABEL: predeploy-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
         with:
           script: sitehost-api.sh
           api_command: backup
 
       - name: Wait for container backup
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -387,13 +422,41 @@ jobs:
       - name: Pin new snapshot
         id: pin-snapshot
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           SNAPSHOT_MODE: pin
         with:
           script: remote-snapshots.sh
           command_timeout: 5m
+          capture_stdout: "true"
           env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Record snapshot id
+        id: snapshot
+        if: success() && inputs.container_snapshot
+        env:
+          PIN_STDOUT: ${{ steps.pin-snapshot.outputs.stdout }}
+        run: |
+          set -euo pipefail
+          id="$(printf '%s\n' "$PIN_STDOUT" | tr -d '\r' | sed -n 's/^snapshot_id=//p' | tail -n 1)"
+          if [[ ! "$id" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]{0,128}$ || "$id" == "latest" ]]; then
+            echo "The SiteHost backup did not report a snapshot directory name." >&2
+            printf '%s\n' "$PIN_STDOUT" >&2
+            exit 1
+          fi
+          echo "snapshot_id=${id}" >> "$GITHUB_OUTPUT"
+          echo "SiteHost snapshot id: ${id}"
+          {
+            echo "### SiteHost container backup"
+            echo
+            echo "Container \`${SITEHOST_CONTAINER}\` on stack \`${SITEHOST_STACK}\`."
+            echo
+            echo "Snapshot id \`${id}\`."
+            echo
+            echo "Restore application files from \`${SITEHOST_BACKUP_ROOT%/}/${id}/application\`."
+            echo
+            echo "The scheduler job id is the backup task. This directory name is the copy a rollback uses."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve release name
         id: release
@@ -424,7 +487,7 @@ jobs:
       - name: Deploy commit
         id: deploy
         if: success()
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
@@ -442,7 +505,7 @@ jobs:
       - name: Set TALARIA_RELEASE
         id: set-release
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
@@ -452,7 +515,7 @@ jobs:
 
       - name: Wait for container restart
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -515,18 +578,22 @@ jobs:
         id: test-rollback
         if: success() && inputs.test_rollback
         run: |
-          echo "Test rollback is on. The deploy finished, and this step fails so database and assets backups from this run are restored."
+          echo "Test rollback is on. The deploy finished, and this step fails so the backups from this run are restored."
           exit 1
 
       - name: Confirm php restart
         if: success()
         run: |
           echo "Deploy succeeded. TALARIA_RELEASE and TALARIA_COMMIT_SHA are in .env, and php was restarted."
-          echo "If the container environment screen also sets either variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
+          if [[ "${{ inputs.container_snapshot }}" == "true" ]]; then
+            echo "The same values were written through the SiteHost environment API, which restarted the container."
+          else
+            echo "If the container environment screen also sets either variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
+          fi
 
       - name: Discard deploy backups
         if: success() && (inputs.backup_database || inputs.backup_assets)
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           RESTORE_ACTION: discard
         with:
@@ -534,22 +601,9 @@ jobs:
           command_timeout: 30m
           env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
 
-      - name: Restore database and assets
-        if: >-
-          failure() &&
-          (inputs.backup_database || inputs.backup_assets) &&
-          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
-        env:
-          RESTORE_ACTION: restore
-        with:
-          script: remote-restore.sh
-          command_timeout: 30m
-          env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
-
       - name: Remove snapshot records
         if: success() && inputs.container_snapshot
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        uses: ./actions/ssh
         env:
           SNAPSHOT_MODE: cleanup
         with:
@@ -563,15 +617,31 @@ jobs:
           failure() &&
           inputs.container_snapshot &&
           steps.pin-snapshot.outcome == 'success' &&
-          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
-        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
+        uses: ./actions/ssh
+        env:
+          # Restore the database inside the snapshot only when this run did not dump it.
+          RESTORE_SNAPSHOT_DATABASE: ${{ inputs.backup_database == false }}
         with:
           script: remote-rollback.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT
+          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT RESTORE_SNAPSHOT_DATABASE
+
+      - name: Restore database and assets
+        if: >-
+          failure() &&
+          (inputs.backup_database || inputs.backup_assets) &&
+          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
+        uses: ./actions/ssh
+        env:
+          RESTORE_ACTION: restore
+        with:
+          script: remote-restore.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
 
       - name: Release variable after rollback
         if: failure() && steps.rollback.outcome == 'success' && steps.set-release.outcome == 'success'
         run: |
-          echo "Application files and the database were restored."
-          echo "TALARIA_RELEASE was already updated and was left unchanged, because changing it restarts the container again."
+          echo "Application files were restored from the pinned SiteHost snapshot."
+          echo "TALARIA_RELEASE was already updated in the container environment and was left unchanged, because changing it restarts the container again."
