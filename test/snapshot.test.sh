@@ -127,4 +127,26 @@ if [[ "$(cat "$MYSQL_ARGS")" != *"--host=db.example"* || "$(cat "$MYSQL_ARGS")" 
   exit 1
 fi
 
+missing_root="${tmp}/missing-backups"
+export SITEHOST_BACKUP_ROOT="$missing_root"
+export DEPLOY_LOG_DIR="${tmp}/logs-missing"
+recorded="$(SNAPSHOT_MODE=record bash "$snapshots")"
+if [[ "$recorded" != *"does not exist yet"* ]]; then
+  echo "record should allow a missing backup root" >&2
+  printf '%s\n' "$recorded" >&2
+  exit 1
+fi
+if [[ -s "${DEPLOY_LOG_DIR}/deploy-snapshots-before.txt" ]]; then
+  echo "a missing backup root should record an empty list" >&2
+  exit 1
+fi
+mkdir -p "${missing_root}/2026-10-19-190000/application"
+printf 'first\n' > "${missing_root}/2026-10-19-190000/application/index.php"
+first="$(SNAPSHOT_MODE=pin bash "$snapshots" 2>/dev/null)"
+if [[ "$first" != "snapshot_id=2026-10-19-190000" ]]; then
+  echo "the first snapshot should pin when the backup root was missing" >&2
+  printf '%s\n' "$first" >&2
+  exit 1
+fi
+
 echo "snapshot test passed"

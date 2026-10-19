@@ -16,9 +16,14 @@ log_dir="${DEPLOY_LOG_DIR:-/container/logs}"
 before_file="${log_dir}/deploy-snapshots-before.txt"
 pinned_file="${log_dir}/deploy-snapshot-path.txt"
 
-# Require SITEHOST_BACKUP_ROOT to be an existing absolute directory, and not /.
-assert_backup_root() {
+# Require SITEHOST_BACKUP_ROOT to be an absolute directory, and not /.
+assert_backup_root_path() {
   assert_absolute_path "SITEHOST_BACKUP_ROOT" "$SITEHOST_BACKUP_ROOT"
+}
+
+# Require the backup root to exist. Pinning needs the directory SiteHost created.
+assert_backup_root() {
+  assert_backup_root_path
   if [[ ! -d "$SITEHOST_BACKUP_ROOT" ]]; then
     echo "Backup root does not exist: ${SITEHOST_BACKUP_ROOT}" >&2
     exit 1
@@ -42,8 +47,14 @@ assert_snapshot_name() {
 }
 
 # Save the snapshot names that already exist before this deploy's backup starts.
+# The directory is absent until SiteHost has taken a backup for this container.
 record_snapshots() {
   mkdir -p "$log_dir"
+  if [[ ! -d "$SITEHOST_BACKUP_ROOT" ]]; then
+    : > "$before_file"
+    echo "Backup root does not exist yet: ${SITEHOST_BACKUP_ROOT}. Recorded no existing snapshots."
+    return 0
+  fi
   list_snapshot_names > "$before_file"
   echo "Recorded $(wc -l < "$before_file" | tr -d ' ') existing snapshot directories"
 }
@@ -100,7 +111,7 @@ cleanup_deploy_files() {
 
 case "$SNAPSHOT_MODE" in
   record)
-    assert_backup_root
+    assert_backup_root_path
     record_snapshots
     ;;
   pin)
