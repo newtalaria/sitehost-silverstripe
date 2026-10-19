@@ -388,7 +388,7 @@ jobs:
 
       - name: Record existing snapshots
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           SNAPSHOT_MODE: record
         with:
@@ -399,7 +399,7 @@ jobs:
       - name: Start container backup
         id: backup
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           BACKUP_LABEL: predeploy-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
         with:
@@ -408,7 +408,7 @@ jobs:
 
       - name: Wait for container backup
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -419,7 +419,7 @@ jobs:
       - name: Pin new snapshot
         id: pin-snapshot
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           SNAPSHOT_MODE: pin
         with:
@@ -484,7 +484,7 @@ jobs:
       - name: Deploy commit
         id: deploy
         if: success()
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
@@ -502,7 +502,7 @@ jobs:
       - name: Set TALARIA_RELEASE
         id: set-release
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
@@ -512,7 +512,7 @@ jobs:
 
       - name: Wait for container restart
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         with:
           script: sitehost-api.sh
           api_command: poll-job
@@ -590,7 +590,7 @@ jobs:
 
       - name: Discard deploy backups
         if: success() && (inputs.backup_database || inputs.backup_assets)
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           RESTORE_ACTION: discard
         with:
@@ -600,7 +600,7 @@ jobs:
 
       - name: Remove snapshot records
         if: success() && inputs.container_snapshot
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           SNAPSHOT_MODE: cleanup
         with:
@@ -615,7 +615,7 @@ jobs:
           inputs.container_snapshot &&
           steps.pin-snapshot.outcome == 'success' &&
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           # Restore the database inside the snapshot only when this run did not dump it.
           RESTORE_SNAPSHOT_DATABASE: ${{ inputs.backup_database == false }}
@@ -629,7 +629,7 @@ jobs:
           failure() &&
           (inputs.backup_database || inputs.backup_assets) &&
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
-        uses: ./actions/ssh
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           RESTORE_ACTION: restore
         with:
