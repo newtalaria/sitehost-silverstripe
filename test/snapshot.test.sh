@@ -149,4 +149,22 @@ if [[ "$first" != "snapshot_id=2026-10-19-190000" ]]; then
   exit 1
 fi
 
+link_root="${tmp}/link-backups"
+mkdir -p "${tmp}/real-backups/2026-10-18_14:33:56/application"
+printf 'nightly\n' > "${tmp}/real-backups/2026-10-18_14:33:56/application/index.php"
+ln -s nightly-target "${tmp}/real-backups/latest"
+ln -s "${tmp}/real-backups" "$link_root"
+export SITEHOST_BACKUP_ROOT="$link_root"
+export DEPLOY_LOG_DIR="${tmp}/logs-link"
+linked="$(SNAPSHOT_MODE=record bash "$snapshots")"
+if [[ "$linked" != *"Recorded 1 existing snapshot directories"* ]]; then
+  echo "record should follow the backup root symlink and skip latest" >&2
+  printf '%s\n' "$linked" >&2
+  exit 1
+fi
+if ! grep -qx '2026-10-18_14:33:56' "${DEPLOY_LOG_DIR}/deploy-snapshots-before.txt"; then
+  echo "a timestamp with colons should be recorded" >&2
+  exit 1
+fi
+
 echo "snapshot test passed"

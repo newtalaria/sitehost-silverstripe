@@ -196,6 +196,7 @@ jobs:
       SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
       SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
       SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
       SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_SHA: ${{ github.sha }}
@@ -301,6 +302,7 @@ jobs:
             exit 1
           fi
           container="$(trim "${SITEHOST_CONTAINER:-}")"
+          stack="$(trim "${SITEHOST_STACK:-}")"
           service="$(trim "${SITEHOST_SERVICE:-}")"
           if [[ -z "$service" ]]; then
             service="$container"
@@ -325,6 +327,7 @@ jobs:
             printf 'SITEHOST_CLIENT_ID=%s\n' "$(trim "${SITEHOST_CLIENT_ID:-}")"
             printf 'SITEHOST_SERVER=%s\n' "$(trim "${SITEHOST_SERVER:-}")"
             printf 'SITEHOST_SERVICE=%s\n' "$service"
+            printf 'SITEHOST_STACK=%s\n' "$stack"
             printf 'SITEHOST_CONTAINER=%s\n' "$container"
             printf 'SITEHOST_APP_PATH=%s\n' "$app_path"
             printf 'SITEHOST_BACKUP_ROOT=%s\n' "$backup_root"
@@ -381,7 +384,7 @@ jobs:
           done
           if [[ "$missing" -ne 0 ]]; then
             echo "SITEHOST_SERVER is the API server name, such as ch-servername, not the SSH address." >&2
-            echo "SITEHOST_CONTAINER is this container. The backup sends that name as the stack and as containers[0]." >&2
+            echo "SITEHOST_CONTAINER is this container, such as test.example.com. The stack name omits the dots." >&2
             echo "Leave the API key IP allowlist empty. A listed address rejects GitHub-hosted runners." >&2
             exit 1
           fi
@@ -436,7 +439,7 @@ jobs:
         run: |
           set -euo pipefail
           id="$(printf '%s\n' "$PIN_STDOUT" | tr -d '\r' | sed -n 's/^snapshot_id=//p' | tail -n 1)"
-          if [[ ! "$id" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]{0,128}$ || "$id" == "latest" ]]; then
+          if [[ ! "$id" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,180}$ || "$id" == "latest" ]]; then
             echo "The SiteHost backup did not report a snapshot directory name." >&2
             printf '%s\n' "$PIN_STDOUT" >&2
             exit 1

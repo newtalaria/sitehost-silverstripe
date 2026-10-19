@@ -50,7 +50,7 @@ Open the environment and add these **variables**:
 | `SITEHOST_CONTAINER` | Every deploy | `test.example.com` |
 | `SITEHOST_SITE_URL` | Every deploy | `https://test.example.com` |
 
-`SITEHOST_CONTAINER` is the container name. The API backup sends that name as the stack and as `containers[0]`. A value already stored as `SITEHOST_STACK` is used when `SITEHOST_CONTAINER` is unset.
+`SITEHOST_CONTAINER` is the container name, such as `test.example.com`. The SiteHost API stack name is that name with the dots removed, `testexamplecom`, unless `SITEHOST_STACK` is set to the name shown in the SiteHost panel.
 
 `SITEHOST_SITE_URL` must start with `http://` or `https://`.
 
@@ -176,9 +176,9 @@ The local copies and the SiteHost API backup are separate inputs. Both can be on
 
 ### Through the SiteHost API
 
-`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_CONTAINER` is sent as the stack name and as `containers[0]`. The action stops when that name is missing, because an empty container list backs up every container on the stack.
+`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. The stack `name` is `SITEHOST_STACK` when that variable is a name without dots. Otherwise the action removes the dots from `SITEHOST_CONTAINER`, so `example.nz` is sent as stack `examplenz` and as `containers[0]=example.nz`. The action stops when the container name is missing, because an empty container list backs up every container on the stack.
 
-The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost then adds one directory under `/container/backups/containers/`. The directory name is the id this action restores from. The run lists the directories before the backup and keeps the single new one. A container with no backup yet has no directory there, so that list is empty and this backup is the first snapshot. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
+The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost then adds one directory under `/container/backups/containers/`. That path is often a symlink. The directory name is the id this action restores from, including the colons in names such as `2026-10-18_14:33:56`. The run lists the directories before the backup and keeps the single new one. A container with no backup yet has no directory there, so that list is empty and this backup is the first snapshot. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
 
 A container backup holds `application`, `config`, `crontabs`, and, on a web container, `databases/<database>.sql.gz`. A failed deploy, smoke check, or rollback test restores `application` from the pinned directory. `config` stays as it is. The database file in the snapshot is restored when this run did not take its own `mysqldump`. The expected file is `databases/<SS_DATABASE_NAME>.sql.gz`.
 

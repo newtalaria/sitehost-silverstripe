@@ -93,8 +93,8 @@ fi
 export BACKUP_LABEL="predeploy-1-1-0123456789abcdef0123456789abcdef01234567"
 : > "$CURL_LOG"
 backup_out="$(bash "$api" backup 2>&1)"
-if [[ "$backup_out" != *"container example.nz"* || "$backup_out" != *"job_type=scheduler"* || "$backup_out" != *"job_id=42"* ]]; then
-  echo "backup did not report the container and the scheduler job" >&2
+if [[ "$backup_out" != *"container example.nz"* || "$backup_out" != *"stack examplenz"* || "$backup_out" != *"job_type=scheduler"* || "$backup_out" != *"job_id=42"* ]]; then
+  echo "backup did not report the container, the stack, and the scheduler job" >&2
   printf '%s\n' "$backup_out" >&2
   exit 1
 fi
@@ -106,8 +106,12 @@ if ! grep -qx 'containers\[0\]=example.nz' "$CURL_LOG"; then
   echo "backup did not send containers[0]" >&2
   exit 1
 fi
-if ! grep -qx 'name=example.nz' "$CURL_LOG"; then
-  echo "backup did not send the container name as the stack" >&2
+if ! grep -qx 'name=examplenz' "$CURL_LOG"; then
+  echo "backup did not send the stack name with the dots removed" >&2
+  exit 1
+fi
+if grep -qx 'name=example.nz' "$CURL_LOG"; then
+  echo "backup sent the container hostname as the stack name" >&2
   exit 1
 fi
 if ! grep -q '/cloud/stack/backup.json' "$CURL_LOG"; then

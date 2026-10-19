@@ -31,8 +31,9 @@ assert_backup_root() {
 }
 
 # List real snapshot directories under SITEHOST_BACKUP_ROOT, skipping the latest symlink.
+# -H follows the backup root when SiteHost publishes it as a symlink, and does not follow latest.
 list_snapshot_names() {
-  find "$SITEHOST_BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
+  find -H "$SITEHOST_BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
 }
 
 # Reject an empty, hidden, nested, or path-traversal snapshot name.
