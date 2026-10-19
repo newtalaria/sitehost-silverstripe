@@ -62,35 +62,50 @@ record_snapshots() {
 
 # Keep the single new snapshot directory and store its path for rollback.
 # The directory name is the restore id. The API job id is only the scheduler task.
+# SiteHost marks the job completed before the directory is visible on the container.
 pin_snapshot() {
   if [[ ! -f "$before_file" ]]; then
     echo "Missing snapshot list from before the backup: ${before_file}" >&2
     exit 1
   fi
-  local current new_names count name path
-  current="$(mktemp)"
-  list_snapshot_names > "$current"
-  new_names="$(comm -13 "$before_file" "$current")"
-  rm -f "$current"
-  count="$(printf '%s\n' "$new_names" | sed '/^$/d' | wc -l | tr -d ' ')"
-  if [[ "$count" != "1" ]]; then
-    echo "Expected exactly one new snapshot directory under ${SITEHOST_BACKUP_ROOT}, found ${count}" >&2
-    printf '%s\n' "$new_names" >&2
+  local wait_seconds="${SNAPSHOT_WAIT_SECONDS:-180}"
+  local poll_seconds="${SNAPSHOT_POLL_SECONDS:-5}"
+  if [[ ! "$wait_seconds" =~ ^[0-9]+$ || ! "$poll_seconds" =~ ^[0-9]+$ || "$poll_seconds" -lt 1 ]]; then
+    echo "SNAPSHOT_WAIT_SECONDS and SNAPSHOT_POLL_SECONDS must be whole numbers" >&2
     exit 1
   fi
-  name="$(printf '%s\n' "$new_names" | sed '/^$/d')"
+
+  local start=$SECONDS
+  local current new_names count name="" path=""
+  while true; do
+    current="$(mktemp)"
+    list_snapshot_names > "$current"
+    new_names="$(comm -13 "$before_file" "$current")"
+    rm -f "$current"
+    count="$(printf '%s\n' "$new_names" | sed '/^$/d' | wc -l | tr -d ' ')"
+    if [[ "$count" -gt 1 ]]; then
+      echo "Expected exactly one new snapshot directory under ${SITEHOST_BACKUP_ROOT}, found ${count}" >&2
+      printf '%s\n' "$new_names" >&2
+      exit 1
+    fi
+    if [[ "$count" == "1" ]]; then
+      name="$(printf '%s\n' "$new_names" | sed '/^$/d')"
+      path="${SITEHOST_BACKUP_ROOT%/}/${name}"
+      if [[ -d "${path}/application" && -n "$(ls -A "${path}/application")" ]]; then
+        break
+      fi
+    fi
+    if (( SECONDS - start >= wait_seconds )); then
+      echo "Expected exactly one new snapshot directory under ${SITEHOST_BACKUP_ROOT}, found ${count} after ${wait_seconds}s" >&2
+      printf '%s\n' "$new_names" >&2
+      exit 1
+    fi
+    echo "Waiting for the new snapshot directory under ${SITEHOST_BACKUP_ROOT}" >&2
+    sleep "$poll_seconds"
+  done
   assert_snapshot_name "$name"
   if [[ "$name" == "latest" ]]; then
     echo "Refusing to pin a snapshot named latest" >&2
-    exit 1
-  fi
-  path="${SITEHOST_BACKUP_ROOT%/}/${name}"
-  if [[ ! -d "${path}/application" ]]; then
-    echo "Pinned snapshot has no application directory: ${path}/application" >&2
-    exit 1
-  fi
-  if [[ -z "$(ls -A "${path}/application")" ]]; then
-    echo "Refusing to pin an empty application snapshot: ${path}/application" >&2
     exit 1
   fi
   printf '%s\n' "$path" > "$pinned_file"

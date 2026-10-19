@@ -24,10 +24,10 @@ SNAPSHOT_MODE=record bash "$snapshots" >/dev/null
 
 mkdir -p "$SITEHOST_BACKUP_ROOT/empty/application"
 set +e
-empty="$(SNAPSHOT_MODE=pin bash "$snapshots" 2>&1)"
+empty="$(SNAPSHOT_WAIT_SECONDS=0 SNAPSHOT_MODE=pin bash "$snapshots" 2>&1)"
 empty_status=$?
 set -e
-if [[ "$empty_status" -eq 0 || "$empty" != *"empty application snapshot"* ]]; then
+if [[ "$empty_status" -eq 0 || "$empty" != *"found 1"* ]]; then
   echo "an empty application snapshot should not be pinned" >&2
   printf '%s\n' "$empty" >&2
   exit 1
@@ -164,6 +164,26 @@ if [[ "$linked" != *"Recorded 1 existing snapshot directories"* ]]; then
 fi
 if ! grep -qx '2026-10-18_14:33:56' "${DEPLOY_LOG_DIR}/deploy-snapshots-before.txt"; then
   echo "a timestamp with colons should be recorded" >&2
+  exit 1
+fi
+
+delay_root="${tmp}/delay-backups"
+mkdir -p "$delay_root/old/application"
+printf 'old\n' > "$delay_root/old/application/index.php"
+export SITEHOST_BACKUP_ROOT="$delay_root"
+export DEPLOY_LOG_DIR="${tmp}/logs-delay"
+SNAPSHOT_MODE=record bash "$snapshots" >/dev/null
+(
+  sleep 1
+  mkdir -p "$delay_root/2026-10-19_09:35:25/application"
+  printf 'late\n' > "$delay_root/2026-10-19_09:35:25/application/index.php"
+) &
+delayed="$(SNAPSHOT_WAIT_SECONDS=5 SNAPSHOT_POLL_SECONDS=1 SNAPSHOT_MODE=pin bash "$snapshots" 2>"${tmp}/delay.err")"
+wait || true
+if [[ "$delayed" != "snapshot_id=2026-10-19_09:35:25" ]]; then
+  echo "pin should wait until the snapshot directory appears" >&2
+  printf '%s\n' "$delayed" >&2
+  cat "${tmp}/delay.err" >&2
   exit 1
 fi
 
