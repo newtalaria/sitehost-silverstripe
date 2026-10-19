@@ -123,16 +123,16 @@ assert_api_name() {
   fi
 }
 
-# SiteHost stack names omit dots. example.nz is the container; examplenz is the stack.
+# SITEHOST_STACK is the id from the /container mount. SITEHOST_CONTAINER is the hostname.
 resolve_stack_name() {
-  local derived
-  if [[ -n "${SITEHOST_STACK:-}" && "$SITEHOST_STACK" != "$SITEHOST_CONTAINER" && "$SITEHOST_STACK" != *.* ]]; then
-    assert_api_name "SITEHOST_STACK" "$SITEHOST_STACK"
-    return 0
+  if [[ -z "${SITEHOST_STACK:-}" || "$SITEHOST_STACK" == "$SITEHOST_CONTAINER" || "$SITEHOST_STACK" == *.* ]]; then
+    echo "SITEHOST_STACK must be the id SiteHost mounts as /container, such as cce6c3ce72078711." >&2
+    echo "SITEHOST_CONTAINER stays the hostname, such as test.example.com." >&2
+    echo "SSH in and run:" >&2
+    echo "  awk '\$5 == \"/container\" { n=\$4; sub(\".*/\", \"\", n); print n }' /proc/self/mountinfo" >&2
+    echo "Add that value as the SITEHOST_STACK variable on this GitHub environment." >&2
+    exit 1
   fi
-  derived="${SITEHOST_CONTAINER//./}"
-  echo "SiteHost stack names do not include dots. Sending stack ${derived} and container ${SITEHOST_CONTAINER}."
-  SITEHOST_STACK="$derived"
   assert_api_name "SITEHOST_STACK" "$SITEHOST_STACK"
 }
 

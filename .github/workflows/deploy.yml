@@ -375,6 +375,7 @@ jobs:
             SITEHOST_CLIENT_ID \
             SITEHOST_SERVER \
             SITEHOST_CONTAINER \
+            SITEHOST_STACK \
             SITEHOST_BACKUP_ROOT
           do
             if [[ -z "${!name:-}" ]]; then
@@ -384,7 +385,9 @@ jobs:
           done
           if [[ "$missing" -ne 0 ]]; then
             echo "SITEHOST_SERVER is the API server name, such as ch-servername, not the SSH address." >&2
-            echo "SITEHOST_CONTAINER is this container, such as test.example.com. The stack name omits the dots." >&2
+            echo "SITEHOST_CONTAINER is the hostname, such as test.example.com." >&2
+            echo "SITEHOST_STACK is the id from this command on the container:" >&2
+            echo "  awk '\$5 == \"/container\" { n=\$4; sub(\".*/\", \"\", n); print n }' /proc/self/mountinfo" >&2
             echo "Leave the API key IP allowlist empty. A listed address rejects GitHub-hosted runners." >&2
             exit 1
           fi

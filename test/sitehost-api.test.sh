@@ -74,6 +74,38 @@ if [[ -s "$CURL_LOG" ]]; then
 fi
 
 export SITEHOST_CONTAINER="example.nz"
+: > "$CURL_LOG"
+set +e
+missing_stack="$(bash "$api" backup 2>&1)"
+missing_stack_status=$?
+set -e
+if [[ "$missing_stack_status" -eq 0 || "$missing_stack" != *"SITEHOST_STACK"* || "$missing_stack" != *"mountinfo"* ]]; then
+  echo "backup without SITEHOST_STACK should explain how to read the id" >&2
+  printf '%s\n' "$missing_stack" >&2
+  exit 1
+fi
+if [[ -s "$CURL_LOG" ]]; then
+  echo "backup without a stack called the API" >&2
+  exit 1
+fi
+
+export SITEHOST_STACK="example.nz"
+: > "$CURL_LOG"
+set +e
+hostname_stack="$(bash "$api" backup 2>&1)"
+hostname_stack_status=$?
+set -e
+if [[ "$hostname_stack_status" -eq 0 || "$hostname_stack" != *"SITEHOST_STACK"* ]]; then
+  echo "a hostname must not be accepted as the stack id" >&2
+  printf '%s\n' "$hostname_stack" >&2
+  exit 1
+fi
+if [[ -s "$CURL_LOG" ]]; then
+  echo "a hostname stack called the API" >&2
+  exit 1
+fi
+
+export SITEHOST_STACK="cce6c3ce72078711"
 export BACKUP_LABEL="bad label"
 : > "$CURL_LOG"
 set +e
@@ -93,7 +125,7 @@ fi
 export BACKUP_LABEL="predeploy-1-1-0123456789abcdef0123456789abcdef01234567"
 : > "$CURL_LOG"
 backup_out="$(bash "$api" backup 2>&1)"
-if [[ "$backup_out" != *"container example.nz"* || "$backup_out" != *"stack examplenz"* || "$backup_out" != *"job_type=scheduler"* || "$backup_out" != *"job_id=42"* ]]; then
+if [[ "$backup_out" != *"container example.nz"* || "$backup_out" != *"stack cce6c3ce72078711"* || "$backup_out" != *"job_type=scheduler"* || "$backup_out" != *"job_id=42"* ]]; then
   echo "backup did not report the container, the stack, and the scheduler job" >&2
   printf '%s\n' "$backup_out" >&2
   exit 1
@@ -106,8 +138,8 @@ if ! grep -qx 'containers\[0\]=example.nz' "$CURL_LOG"; then
   echo "backup did not send containers[0]" >&2
   exit 1
 fi
-if ! grep -qx 'name=examplenz' "$CURL_LOG"; then
-  echo "backup did not send the stack name with the dots removed" >&2
+if ! grep -qx 'name=cce6c3ce72078711' "$CURL_LOG"; then
+  echo "backup did not send SITEHOST_STACK as the stack name" >&2
   exit 1
 fi
 if grep -qx 'name=example.nz' "$CURL_LOG"; then
