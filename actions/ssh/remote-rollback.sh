@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Restores one container's application files from a pinned snapshot directory.
-# When RESTORE_SNAPSHOT_DATABASE=true, also restores databases/<name>.sql.gz
-# from that directory. Does not follow "latest" and does not remove the local
-# mysqldump under /container/logs. That dump belongs to the local restore path.
+# Restores one container's application files from a snapshot directory.
+# SNAPSHOT_PATH selects that directory. When it is unset, the pin file from the
+# last backup is used. Refuses a directory named latest. When
+# RESTORE_SNAPSHOT_DATABASE=true, also restores databases/<name>.sql.gz from
+# that directory. Does not remove the local mysqldump under /container/logs.
+# That dump belongs to the local restore path. ROLLBACK_CHECK_ONLY=true checks
+# the directory and does not copy files.
 set -euo pipefail
 
 if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
@@ -52,6 +55,10 @@ case "$name" in
     exit 1
     ;;
 esac
+if [[ "$name" == "latest" ]]; then
+  echo "Refusing to roll back from a snapshot named latest" >&2
+  exit 1
+fi
 if [[ "$SNAPSHOT_PATH" == "$SITEHOST_APP_PATH" ]]; then
   echo "Refusing to roll back because the snapshot path is the app path" >&2
   exit 1
@@ -78,6 +85,10 @@ fi
 if [[ ! -d "$SITEHOST_APP_PATH" ]]; then
   echo "App path does not exist: ${SITEHOST_APP_PATH}" >&2
   exit 1
+fi
+if [[ "${ROLLBACK_CHECK_ONLY:-}" == "true" ]]; then
+  echo "Snapshot ${name} is a restore candidate"
+  exit 0
 fi
 if ! command -v rsync >/dev/null 2>&1; then
   echo "rsync is required to roll back application files" >&2

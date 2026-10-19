@@ -1,6 +1,6 @@
 # Silverstripe deploy on SiteHost
 
-Deploys one Silverstripe site onto a SiteHost container. The site repository keeps a short workflow for the Actions form. This repository runs the deploy, the backups, and the restore.
+Deploys one Silverstripe site onto a SiteHost container. The same repository can back up that container, restore a snapshot, print container status, and tag a semver release. The site repository keeps a short workflow for each Actions form. This repository runs the work.
 
 Pin `@v1`.
 
@@ -164,11 +164,166 @@ Pass `TALARIA_DSN` and `TALARIA_API_KEY` in that map. GitHub leaves an environme
 
 Another container is another name in `options` and another GitHub environment with that same name. The shared workflow takes the string it is given. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
-The shared workflow queues deploys with group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can deploy at the same time. Two deploys of one site to the same environment wait. Leave that group off the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group.
+Deploy, backup, restore, and status share the group `sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}`. Two sites can run at the same time. Two runs for one site and the same environment wait. Leave that group off the caller. GitHub cancels the run as a deadlock when the caller and the called workflow lock one group. The release workflow uses a separate group and does not SSH.
 
-Run it from the Actions tab with **Run workflow**. Pick the environment. Database and asset backups are already on. The SiteHost API backup stays off until you turn `container_snapshot` on.
+Run a deploy from the Actions tab with **Run workflow**. Pick the environment. Database and asset backups are already on. The SiteHost API backup stays off until you turn `container_snapshot` on.
 
-## What each run can turn on
+## Back up a container
+
+Save this as `.github/workflows/backup.yml` in the site repository. It takes a SiteHost API backup of one container and prints the snapshot id. It does not check out code or change the site. The id stays on the container.
+
+```yaml
+name: Back up SiteHost
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Container to back up
+        type: choice
+        required: true
+        options:
+          - test
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    uses: newtalaria/sitehost-silverstripe/.github/workflows/backup.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+```
+
+The run lists the snapshot directories, asks SiteHost to back up this container, and waits until the new directory is visible. The job summary and the output `snapshot_id` are that directory name, such as `2026-10-19_09:43:28`. Paste it into a restore. The scheduler job id is not a restore id.
+
+## Restore a snapshot
+
+Save this as `.github/workflows/restore.yml`. `snapshot_id` is the directory name from a backup or from status. `confirm` must be the word `restore`. The database inside the snapshot stays unused unless `restore_database` is on.
+
+```yaml
+name: Restore SiteHost
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Container to restore
+        type: choice
+        required: true
+        options:
+          - test
+          - production
+      snapshot_id:
+        description: Snapshot directory name
+        type: string
+        required: true
+      restore_database:
+        description: Load the database stored in that snapshot
+        type: boolean
+        default: false
+      confirm:
+        description: Type restore to replace the application files
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    uses: newtalaria/sitehost-silverstripe/.github/workflows/restore.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+      snapshot_id: ${{ inputs.snapshot_id }}
+      restore_database: ${{ inputs.restore_database }}
+      confirm: ${{ inputs.confirm }}
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+      SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
+```
+
+The run refuses an empty id, `latest`, and any name with a slash. It checks that the directory is a real snapshot with application files, takes a new SiteHost backup, and records that safety id in the summary. Then it copies `application/` from the snapshot you named onto the site. With `restore_database` on, it loads `databases/<SS_DATABASE_NAME>.sql.gz` from that same snapshot. It restarts php and requests `SITEHOST_SITE_URL`.
+
+A deploy that ran `dev/build` needs the database box ticked. Files alone leave the schema ahead of the code.
+
+## Container status
+
+Save this as `.github/workflows/status.yml`. The run SSHes in, prints the checked-out commit, whether that commit is `main` on the git remote, any semver tag that points at it, `TALARIA_RELEASE` from `.env`, free space on `/container`, `supervisorctl status`, and the newest snapshot directory names. It skips `latest`. It does not change files. Copy a snapshot name from the log into the restore form.
+
+```yaml
+name: SiteHost status
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Container to read
+        type: choice
+        required: true
+        options:
+          - test
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    uses: newtalaria/sitehost-silverstripe/.github/workflows/status.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
+```
+
+## Tag a release
+
+Save this as `.github/workflows/release.yml`. Pick `patch`, `minor`, or `major`. The workflow reads the newest tag on the site repository.
+
+| Latest tag | Choice | New tag |
+| --- | --- | --- |
+| `1.2.5` | `patch` | `1.2.6` |
+| `1.2.5` | `minor` | `1.3.0` |
+| `1.2.5` | `major` | `2.0.0` |
+| `v1.2.5` | `patch` | `v1.2.6` |
+| `v1`, `nightly`, or no tag | any | `1.0.0` |
+
+A latest tag that is not `1.2.5` or `v1.2.5` starts at `1.0.0`. Older semver tags stay where they are and are not the base. The release notes are the commit subjects since the previous semver tag. A new `1.0.0` lists the last 30 subjects and names the tag that was ignored. The workflow creates the tag and a GitHub Release on `main`. It does not deploy, and it does not move this action's `v1` tag. Deploy the new tag by running the deploy workflow from that tag.
+
+The caller needs `contents: write`. The reusable workflow refuses any branch other than `main`.
+
+```yaml
+name: Tag a release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increase
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: newtalaria/sitehost-silverstripe/.github/workflows/release.yml@v1
+    with:
+      bump: ${{ inputs.bump }}
+```
+
+## What each deploy can turn on
 
 | Input | Default | Effect |
 | --- | --- | --- |

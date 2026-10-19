@@ -1,0 +1,245 @@
+# Restore one container from a snapshot directory name.
+#
+# Takes a fresh SiteHost backup first and records that id, then copies the
+# chosen snapshot's application files back. The database in the snapshot is
+# restored only when restore_database is true. confirm must be the word restore.
+
+name: Restore SiteHost
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name for this container.
+        type: string
+        required: true
+      snapshot_id:
+        description: Snapshot directory name, such as 2026-10-19_09:43:28. Not the scheduler job id.
+        type: string
+        required: true
+      restore_database:
+        description: Load databases/<SS_DATABASE_NAME>.sql.gz from this snapshot.
+        type: boolean
+        required: false
+        default: false
+      confirm:
+        description: Type restore to replace the application files.
+        type: string
+        required: true
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY:
+        description: Actions login key for the container SSH user.
+        required: false
+      SITEHOST_API_KEY:
+        description: SiteHost API key with no IP allowlist.
+        required: false
+    outputs:
+      safety_snapshot_id:
+        description: Directory name of the backup taken before files were replaced.
+        value: ${{ jobs.restore.outputs.safety_snapshot_id }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate restore request
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$ENVIRONMENT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]]; then
+            echo "environment must match [A-Za-z0-9][A-Za-z0-9_.-]{0,62}." >&2
+            exit 1
+          fi
+          if [[ "$CONFIRM" != "restore" ]]; then
+            echo "Type restore in confirm to replace the application files." >&2
+            exit 1
+          fi
+          if [[ -z "$SNAPSHOT_ID" || "$SNAPSHOT_ID" == "latest" || "$SNAPSHOT_ID" == *"/"* || "$SNAPSHOT_ID" == *".."* ]]; then
+            echo "snapshot_id must be the directory name SiteHost created, not latest." >&2
+            exit 1
+          fi
+          if [[ ! "$SNAPSHOT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,180}$ ]]; then
+            echo "snapshot_id has unexpected characters." >&2
+            exit 1
+          fi
+
+  restore:
+    needs: guard
+    if: always() && needs.guard.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ${{ inputs.environment }}
+    outputs:
+      safety_snapshot_id: ${{ steps.snapshot.outputs.snapshot_id }}
+    env:
+      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+
+    steps:
+      - name: Normalize configuration
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY || vars.SITEHOST_SSH_PRIVATE_KEY }}
+          SITEHOST_API_KEY_RAW: ${{ secrets.SITEHOST_API_KEY || vars.SITEHOST_API_KEY }}
+        with:
+          script: configure-env.sh
+
+      - name: Check SSH configuration
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          REQUIRE_CONFIG: restore
+        with:
+          script: require-config.sh
+
+      - name: Check SiteHost API configuration
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          REQUIRE_CONFIG: api
+        with:
+          script: require-config.sh
+
+      - name: Set restore path
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          printf 'SNAPSHOT_PATH=%s\n' "${SITEHOST_BACKUP_ROOT%/}/${SNAPSHOT_ID}" >> "$GITHUB_ENV"
+
+      - name: Check snapshot directory
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          ROLLBACK_CHECK_ONLY: "true"
+        with:
+          script: remote-rollback.sh
+          command_timeout: 5m
+          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT SNAPSHOT_PATH ROLLBACK_CHECK_ONLY
+
+      - name: Record existing snapshots
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SNAPSHOT_MODE: record
+        with:
+          script: remote-snapshots.sh
+          command_timeout: 5m
+          env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Start container backup
+        id: backup
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          BACKUP_LABEL: prerestore-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          script: sitehost-api.sh
+          api_command: backup
+
+      - name: Wait for container backup
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: sitehost-api.sh
+          api_command: poll-job
+          api_job_type: ${{ steps.backup.outputs.job_type }}
+          api_job_id: ${{ steps.backup.outputs.job_id }}
+          api_timeout: "2700"
+
+      - name: Pin new snapshot
+        id: pin-snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SNAPSHOT_MODE: pin
+        with:
+          script: remote-snapshots.sh
+          command_timeout: 5m
+          capture_stdout: "true"
+          env_names: SITEHOST_BACKUP_ROOT SNAPSHOT_MODE
+
+      - name: Record safety snapshot id
+        id: snapshot
+        env:
+          PIN_STDOUT: ${{ steps.pin-snapshot.outputs.stdout }}
+        run: |
+          set -euo pipefail
+          id="$(printf '%s\n' "$PIN_STDOUT" | tr -d '\r' | sed -n 's/^snapshot_id=//p' | tail -n 1)"
+          if [[ ! "$id" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,180}$ || "$id" == "latest" ]]; then
+            echo "The SiteHost backup did not report a snapshot directory name." >&2
+            printf '%s\n' "$PIN_STDOUT" >&2
+            exit 1
+          fi
+          echo "snapshot_id=${id}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Safety backup"
+            echo
+            echo "Snapshot id \`${id}\` is the copy taken before this restore."
+            echo
+            echo "Use that id to put the current site back."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore snapshot
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          RESTORE_SNAPSHOT_DATABASE: ${{ inputs.restore_database }}
+        with:
+          script: remote-rollback.sh
+          command_timeout: 30m
+          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT SNAPSHOT_PATH RESTORE_SNAPSHOT_DATABASE
+
+      - name: Restart php
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: remote-restart-php.sh
+          command_timeout: 5m
+
+      - name: Smoke check
+        run: |
+          set -euo pipefail
+          case "$SITEHOST_SITE_URL" in
+            https://*|http://*) ;;
+            *)
+              echo "SITEHOST_SITE_URL must start with http:// or https://" >&2
+              exit 1
+              ;;
+          esac
+          curl --fail --silent --show-error --location \
+            --retry 8 --retry-delay 10 --retry-connrefused --retry-all-errors \
+            --output /dev/null --max-time 30 \
+            "$SITEHOST_SITE_URL"
+
+      - name: Restore summary
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          RESTORE_DATABASE: ${{ inputs.restore_database }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Restore"
+            echo
+            echo "Application files were copied from snapshot \`${SNAPSHOT_ID}\`."
+            echo
+            if [[ "$RESTORE_DATABASE" == "true" ]]; then
+              echo "The snapshot database was loaded."
+            else
+              echo "The snapshot database was left in place."
+            fi
+            echo
+            echo "A deploy that ran dev/build needs the database box ticked, because files alone leave the schema ahead of the code."
+          } >> "$GITHUB_STEP_SUMMARY"

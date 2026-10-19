@@ -86,6 +86,45 @@ if [[ "$(cat "$SITEHOST_APP_PATH/index.php")" != "pinned" ]]; then
   exit 1
 fi
 
+saved_snapshot="$SNAPSHOT_PATH"
+export SNAPSHOT_PATH="${SITEHOST_BACKUP_ROOT}/latest"
+set +e
+latest_out="$(bash "$rollback" 2>&1)"
+latest_status=$?
+set -e
+if [[ "$latest_status" -eq 0 || "$latest_out" != *"named latest"* ]]; then
+  echo "rollback should refuse a snapshot named latest" >&2
+  printf '%s\n' "$latest_out" >&2
+  exit 1
+fi
+
+export SNAPSHOT_PATH="${SITEHOST_BACKUP_ROOT}/not-a-snapshot"
+set +e
+missing_out="$(bash "$rollback" 2>&1)"
+missing_status=$?
+set -e
+if [[ "$missing_status" -eq 0 || "$missing_out" != *"not found"* ]]; then
+  echo "rollback should reject a missing snapshot directory" >&2
+  printf '%s\n' "$missing_out" >&2
+  exit 1
+fi
+
+printf 'stay\n' > "$SITEHOST_APP_PATH/index.php"
+export SNAPSHOT_PATH="$saved_snapshot"
+export ROLLBACK_CHECK_ONLY=true
+checked="$(bash "$rollback")"
+if [[ "$checked" != *"restore candidate"* ]]; then
+  echo "a check should accept an explicit snapshot path without copying files" >&2
+  printf '%s\n' "$checked" >&2
+  exit 1
+fi
+if [[ "$(cat "$SITEHOST_APP_PATH/index.php")" != "stay" ]]; then
+  echo "a check should not copy application files" >&2
+  exit 1
+fi
+unset ROLLBACK_CHECK_ONLY
+export SNAPSHOT_PATH="$saved_snapshot"
+
 printf 'live-again\n' > "$SITEHOST_APP_PATH/index.php"
 export RESTORE_SNAPSHOT_DATABASE=true
 set +e

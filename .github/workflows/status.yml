@@ -1,0 +1,96 @@
+# Read one container. Prints the commit, release, supervisor, disk, and snapshot names.
+# Does not call the SiteHost API and does not change files.
+
+name: SiteHost status
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name for this container.
+        type: string
+        required: true
+    secrets:
+      SITEHOST_SSH_PRIVATE_KEY:
+        description: Actions login key for the container SSH user.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitehost-silverstripe-${{ github.repository }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate environment name
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$ENVIRONMENT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]]; then
+            echo "environment must match [A-Za-z0-9][A-Za-z0-9_.-]{0,62}." >&2
+            exit 1
+          fi
+
+  status:
+    needs: guard
+    if: always() && needs.guard.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    env:
+      SITEHOST_APP_PATH: ${{ vars.SITEHOST_APP_PATH || '/container/application' }}
+      SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
+      SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
+      SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
+      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+
+    steps:
+      - name: Normalize configuration
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          SITEHOST_SSH_PORT_RAW: ${{ vars.SITEHOST_SSH_PORT }}
+          SITEHOST_SSH_HOST_RAW: ${{ vars.SITEHOST_SSH_HOST }}
+          SITEHOST_SSH_USER_RAW: ${{ vars.SITEHOST_SSH_USER }}
+          SITEHOST_SSH_HOST_FINGERPRINT_RAW: ${{ vars.SITEHOST_SSH_HOST_FINGERPRINT }}
+          SITEHOST_SSH_PRIVATE_KEY_RAW: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY || vars.SITEHOST_SSH_PRIVATE_KEY }}
+        with:
+          script: configure-env.sh
+
+      - name: Check SSH configuration
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          REQUIRE_CONFIG: operate
+        with:
+          script: require-config.sh
+
+      - name: Read container status
+        id: status
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: remote-status.sh
+          command_timeout: 5m
+          capture_stdout: "true"
+          env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT
+
+      - name: Write status summary
+        env:
+          REPORT: ${{ steps.status.outputs.stdout }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### SiteHost status"
+            echo
+            echo '```'
+            printf '%s\n' "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$REPORT"

@@ -18,7 +18,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Shellcheck
-        run: shellcheck actions/ssh/*.sh
+        run: shellcheck actions/ssh/*.sh actions/version.sh
 
       - name: Script tests
         run: bash test/run.sh

@@ -1,0 +1,121 @@
+# Tag the calling repository with the next semver release.
+#
+# Reads the newest tag. patch, minor, or major bumps a 1.2.5 or v1.2.5 tag.
+# Any other latest tag, including this action's moving v1 pin, starts at 1.0.0.
+# Does not deploy and does not move an existing tag.
+
+name: Tag a release
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: patch, minor, or major.
+        type: string
+        required: true
+      ref:
+        description: Branch to tag. Only main is accepted.
+        type: string
+        required: false
+        default: main
+    outputs:
+      tag:
+        description: Tag created for this release.
+        value: ${{ jobs.release.outputs.tag }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sitehost-silverstripe-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.create.outputs.tag }}
+    steps:
+      - name: Require main
+        env:
+          REF: ${{ inputs.ref }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "main" ]]; then
+            echo "Releases are created from main." >&2
+            exit 1
+          fi
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *)
+              echo "bump must be patch, minor, or major." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout the repository to tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Checkout the release script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: newtalaria/sitehost-silverstripe
+          ref: v1
+          path: .sitehost-silverstripe-action
+
+      - name: Create the release
+        id: create
+        env:
+          BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          if [[ "$branch" != "main" ]]; then
+            echo "Checked out ${branch}, expected main." >&2
+            exit 1
+          fi
+          tool="${GITHUB_WORKSPACE}/.sitehost-silverstripe-action/actions/version.sh"
+          if [[ ! -f "$tool" ]]; then
+            echo "The release script is not in the v1 checkout." >&2
+            exit 1
+          fi
+          latest="$(git for-each-ref --sort=-creatordate --count=1 --format '%(refname:short)' refs/tags)"
+          next="$(bash "$tool" next "$BUMP" "$latest")"
+          bash "$tool" require-absent "$next"
+          notes="$(bash "$tool" notes "$latest")"
+          if [[ -z "${notes//[[:space:]]/}" ]]; then
+            if [[ -n "$latest" ]]; then
+              notes="No commits since ${latest}."
+            else
+              notes="Starting at 1.0.0."
+            fi
+          fi
+          notes_file="$(mktemp)"
+          printf '%s\n' "$notes" > "$notes_file"
+          sha="$(git rev-parse HEAD)"
+          gh release create "$next" --target "$sha" --title "$next" --notes-file "$notes_file"
+          echo "tag=${next}" >> "$GITHUB_OUTPUT"
+          semver=0
+          if [[ "$latest" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            semver=1
+          fi
+          {
+            echo "### Release ${next}"
+            echo
+            if [[ -z "$latest" ]]; then
+              echo "There was no previous tag."
+            elif [[ "$semver" -eq 0 ]]; then
+              echo "The latest tag \`${latest}\` is not a semver release, so this release starts at 1.0.0."
+            else
+              echo "Previous tag \`${latest}\`."
+            fi
+            echo
+            echo "Tagged \`${sha}\` on main. Deploy that tag with the deploy workflow when you want it on a container."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -10,7 +10,9 @@ inputs:
   script:
     description: >-
       Whitelisted script: remote-deploy.sh, remote-restore.sh,
-      remote-rollback.sh, remote-snapshots.sh, or sitehost-api.sh.
+      remote-rollback.sh, remote-snapshots.sh, remote-status.sh,
+      remote-restart-php.sh, configure-env.sh, require-config.sh,
+      or sitehost-api.sh.
     required: true
   command_timeout:
     description: Timeout passed to the SSH action for a remote script.
@@ -57,7 +59,7 @@ runs:
   steps:
     - name: Build SSH payload
       id: payload
-      if: inputs.script != 'sitehost-api.sh'
+      if: inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh'
       shell: bash
       env:
         SCRIPT_NAME: ${{ inputs.script }}
@@ -66,7 +68,7 @@ runs:
       run: |
         set -euo pipefail
         case "$SCRIPT_NAME" in
-          remote-deploy.sh|remote-restore.sh|remote-rollback.sh|remote-snapshots.sh) ;;
+          remote-deploy.sh|remote-restore.sh|remote-rollback.sh|remote-snapshots.sh|remote-status.sh|remote-restart-php.sh) ;;
           *)
             echo "Unknown remote script: ${SCRIPT_NAME}" >&2
             exit 1
@@ -90,7 +92,7 @@ runs:
 
     - name: Run remote script
       id: remote
-      if: success() && inputs.script != 'sitehost-api.sh'
+      if: success() && inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh'
       uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
       with:
         host: ${{ env.SITEHOST_SSH_HOST }}
@@ -129,3 +131,13 @@ runs:
             exit 1
             ;;
         esac
+
+    - name: Normalize configuration
+      if: success() && inputs.script == 'configure-env.sh'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/configure-env.sh"
+
+    - name: Check configuration
+      if: success() && inputs.script == 'require-config.sh'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/require-config.sh"
