@@ -49,8 +49,8 @@ export CURL_BODY='{"status":true,"msg":"Successful","return":{"job":{"type":"sch
 export SITEHOST_API_KEY="test-api-key"
 export SITEHOST_CLIENT_ID="17"
 export SITEHOST_SERVER="ch-servername"
-export SITEHOST_STACK="test.example.com"
 export BACKUP_LABEL="predeploy-1-1-0123456789abcdef0123456789abcdef01234567"
+unset SITEHOST_STACK || true
 
 : > "$CURL_LOG"
 unset SITEHOST_CONTAINER || true
@@ -106,8 +106,8 @@ if ! grep -qx 'containers\[0\]=example.nz' "$CURL_LOG"; then
   echo "backup did not send containers[0]" >&2
   exit 1
 fi
-if ! grep -qx 'name=test.example.com' "$CURL_LOG"; then
-  echo "backup did not send the stack name" >&2
+if ! grep -qx 'name=example.nz' "$CURL_LOG"; then
+  echo "backup did not send the container name as the stack" >&2
   exit 1
 fi
 if ! grep -q '/cloud/stack/backup.json' "$CURL_LOG"; then

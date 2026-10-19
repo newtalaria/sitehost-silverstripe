@@ -124,13 +124,12 @@ assert_api_name() {
 }
 
 # Ask SiteHost to back up one container and return the scheduled job.
-# POST /cloud/stack/backup accepts containers[0]. Omitting it backs up every
-# container on the stack, so this command requires SITEHOST_CONTAINER.
+# The container name is the stack name on these servers. It is sent as both
+# name and containers[0]. Omitting containers[0] backs up every container.
 cmd_backup() {
   require_env SITEHOST_API_KEY
   require_env SITEHOST_CLIENT_ID
   require_env SITEHOST_SERVER
-  require_env SITEHOST_STACK
   require_env SITEHOST_CONTAINER
   require_env BACKUP_LABEL
 
@@ -139,21 +138,20 @@ cmd_backup() {
     exit 1
   fi
   assert_api_name "SITEHOST_SERVER" "$SITEHOST_SERVER"
-  assert_api_name "SITEHOST_STACK" "$SITEHOST_STACK"
   assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
   if [[ ! "$BACKUP_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$ ]]; then
     echo "BACKUP_LABEL must be 1 to 180 characters: letters, numbers, dots, underscores, and hyphens." >&2
     exit 1
   fi
 
-  echo "Requesting a SiteHost backup of container ${SITEHOST_CONTAINER} on server ${SITEHOST_SERVER}, stack ${SITEHOST_STACK}, label ${BACKUP_LABEL}"
+  echo "Requesting a SiteHost backup of container ${SITEHOST_CONTAINER} on server ${SITEHOST_SERVER}, label ${BACKUP_LABEL}"
 
   local body
   body="$(sitehost_request POST "/cloud/stack/backup.json" \
     --form "apikey=${SITEHOST_API_KEY}" \
     --form "client_id=${SITEHOST_CLIENT_ID}" \
     --form "server=${SITEHOST_SERVER}" \
-    --form "name=${SITEHOST_STACK}" \
+    --form "name=${SITEHOST_CONTAINER}" \
     --form "containers[0]=${SITEHOST_CONTAINER}" \
     --form "params[label]=${BACKUP_LABEL}")"
   job_from_body "$body"
@@ -164,11 +162,13 @@ cmd_set_release() {
   require_env SITEHOST_API_KEY
   require_env SITEHOST_CLIENT_ID
   require_env SITEHOST_SERVER
-  require_env SITEHOST_STACK
-  require_env SITEHOST_SERVICE
+  require_env SITEHOST_CONTAINER
   require_env TALARIA_RELEASE
   require_env TALARIA_COMMIT_SHA
 
+  if [[ -z "${SITEHOST_SERVICE:-}" ]]; then
+    SITEHOST_SERVICE="$SITEHOST_CONTAINER"
+  fi
   if [[ -z "$TALARIA_RELEASE" || "$TALARIA_RELEASE" == *$'\n'* ]]; then
     echo "TALARIA_RELEASE is empty or contains a newline" >&2
     exit 1
@@ -177,13 +177,15 @@ cmd_set_release() {
     echo "TALARIA_COMMIT_SHA must be a 40 character git commit" >&2
     exit 1
   fi
+  assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
+  assert_api_name "SITEHOST_SERVICE" "$SITEHOST_SERVICE"
 
   local body
   body="$(sitehost_request POST "/cloud/stack/environment/update.json" \
     --form "apikey=${SITEHOST_API_KEY}" \
     --form "client_id=${SITEHOST_CLIENT_ID}" \
     --form "server=${SITEHOST_SERVER}" \
-    --form "project=${SITEHOST_STACK}" \
+    --form "project=${SITEHOST_CONTAINER}" \
     --form "service=${SITEHOST_SERVICE}" \
     --form "variables[0][name]=TALARIA_RELEASE" \
     --form "variables[0][content]=${TALARIA_RELEASE}" \

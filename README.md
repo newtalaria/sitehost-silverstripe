@@ -47,11 +47,10 @@ Open the environment and add these **variables**:
 | Name | When | Example |
 | --- | --- | --- |
 | `SITEHOST_SSH_USER` | Every deploy | `exampletest` |
-| `SITEHOST_STACK` | Every deploy | `test.example.com` |
+| `SITEHOST_CONTAINER` | Every deploy | `test.example.com` |
 | `SITEHOST_SITE_URL` | Every deploy | `https://test.example.com` |
-| `SITEHOST_CONTAINER` | SiteHost API backup | `example.nz` |
 
-`SITEHOST_CONTAINER` is the container name. The API backup sends it as `containers[0]`. A stack can hold more than one container, and this action does not back up the stack without that name.
+`SITEHOST_CONTAINER` is the container name. The API backup sends that name as the stack and as `containers[0]`. A value already stored as `SITEHOST_STACK` is used when `SITEHOST_CONTAINER` is unset.
 
 `SITEHOST_SITE_URL` must start with `http://` or `https://`.
 
@@ -177,7 +176,7 @@ The local copies and the SiteHost API backup are separate inputs. Both can be on
 
 ### Through the SiteHost API
 
-`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for one container. The request sends `containers[0]` set to `SITEHOST_CONTAINER`. Leaving that list empty backs up every container on the stack, so the action stops when the name is missing.
+`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_CONTAINER` is sent as the stack name and as `containers[0]`. The action stops when that name is missing, because an empty container list backs up every container on the stack.
 
 The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost then adds one directory under `/container/backups/containers/`. The directory name is the id this action restores from. The run lists the directories before the backup and keeps the single new one. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
 
