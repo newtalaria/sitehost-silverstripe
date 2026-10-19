@@ -51,7 +51,7 @@ Open the environment and add these **variables**:
 | `SITEHOST_STACK` | SiteHost API backup | `cce6c3ce72078711` |
 | `SITEHOST_SITE_URL` | Every deploy | `https://test.example.com` |
 
-`SITEHOST_CONTAINER` is the container hostname. `SITEHOST_STACK` is the id SiteHost uses for that container in the API. Each container has its own id. [Find the stack id](#find-the-stack-id) below is the step for every container.
+`SITEHOST_CONTAINER` is the hostname shown in the SiteHost panel, such as `test.example.com`. `SITEHOST_STACK` is the id SiteHost uses for that stack and, on a one-container stack, for the container itself. [Find the stack id](#find-the-stack-id) below is the step for every container.
 
 `SITEHOST_SITE_URL` must start with `http://` or `https://`.
 
@@ -82,7 +82,7 @@ The test container prints `cce6c3ce72078711`.
 
 3. Open the GitHub environment for that container. The environment name is the string the workflow sends, such as `test` or `production`.
 4. Add a variable named `SITEHOST_STACK` and paste the id from step 2.
-5. Set `SITEHOST_CONTAINER` to the hostname for that same container, such as `test.example.com`.
+5. Set `SITEHOST_CONTAINER` to the hostname for that same container, such as `test.example.com`. The API backup sends `SITEHOST_STACK` as both the stack and the container. The hostname is the panel label.
 
 When `/container/backups/containers` already exists, its real path ends in the same id:
 
@@ -204,7 +204,7 @@ The local copies and the SiteHost API backup are separate inputs. Both can be on
 
 ### Through the SiteHost API
 
-`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_STACK` is sent as the stack `name`. `SITEHOST_CONTAINER` is sent as `containers[0]`. The action stops when either name is missing, because an empty container list backs up every container on the stack. [Find the stack id](#find-the-stack-id) is how those two values are collected.
+`container_snapshot` calls [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_STACK` is sent as the stack `name` and as `containers[0]`. On a stack with several containers, set `SITEHOST_SERVICE` to the one container's id and that value is sent as `containers[0]` instead. The action stops when the stack id is missing, because an empty container list backs up every container on the stack. [Find the stack id](#find-the-stack-id) is how the id is collected. The hostname in `SITEHOST_CONTAINER` is the panel label and is not a container name in this API.
 
 The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost then adds one directory under `/container/backups/containers/`. That path is often a symlink. The directory name is the id this action restores from, including the colons in names such as `2026-10-18_14:33:56`. The run lists the directories before the backup and keeps the single new one. A container with no backup yet has no directory there, so that list is empty and this backup is the first snapshot. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
 
