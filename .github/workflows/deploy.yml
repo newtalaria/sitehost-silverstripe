@@ -96,11 +96,13 @@ on:
       TALARIA_RELEASE_KEY:
         description: Talaria key with releases:write. Used when upload_source_maps is true.
         required: false
-      TALARIA_DSN:
-        description: Talaria API origin for job check-ins and the log collector. Used when monitors.json is present.
+      TALARIA_URL:
+        description: >-
+          Optional ingest origin override for self-host or a custom domain. Leave unset on Talaria Cloud;
+          the host is https://ingest-<cell>.newtalaria.com from TALARIA_API_KEY.
         required: false
       TALARIA_API_KEY:
-        description: Talaria key with monitors:write and logs:write. Used when monitors.json is present.
+        description: Secret tal_sk_ key with monitors:write and logs:write. Used when monitors.json is present.
         required: false
     outputs:
       snapshot_id:
@@ -494,7 +496,7 @@ jobs:
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
-          TALARIA_DSN: ${{ secrets.TALARIA_DSN || vars.TALARIA_DSN }}
+          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
           TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
           TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
@@ -503,7 +505,7 @@ jobs:
         with:
           script: remote-deploy.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_DSN TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_URL TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
 
       - name: Set TALARIA_RELEASE
         id: set-release

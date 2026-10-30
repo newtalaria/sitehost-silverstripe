@@ -1,6 +1,7 @@
 # SiteHost logs preset for otelcol-contrib 0.162.0.
-# The deploy passes --set=exporters.otlp_http.endpoint=${TALARIA_DSN}/otlp
-# after this file, and after talaria/collector.yaml when that file exists.
+# The deploy passes --set=exporters.otlp_http.endpoint=<ingest origin>/otlp after this
+# file, and after talaria/collector.yaml when that file exists. The origin is
+# TALARIA_URL, or https://ingest-<cell>.newtalaria.com from the key's cell.
 # The API key stays in the process environment.
 
 extensions:
@@ -76,7 +77,7 @@ exporters:
   otlp_http:
     endpoint: http://127.0.0.1:1
     headers:
-      X-API-Key: ${env:TALARIA_API_KEY}
+      Authorization: Bearer ${env:TALARIA_API_KEY}
     compression: gzip
 
 service:

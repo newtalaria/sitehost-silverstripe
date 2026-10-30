@@ -19,19 +19,77 @@ talaria_collector_trim() {
   printf '%s' "$value"
 }
 
-# API origin plus /otlp. A value that already ends in /otlp is kept.
-talaria_collector_endpoint() {
-  local dsn="$1"
-  dsn="$(talaria_collector_trim "$dsn")"
-  dsn="${dsn%/}"
-  if [[ "$dsn" != */otlp ]]; then
-    dsn="${dsn}/otlp"
-  fi
-  if [[ ! "$dsn" =~ ^https?://[^[:space:]\'\"%]+/otlp$ ]]; then
-    echo "Set TALARIA_DSN to the API origin" >&2
+TALARIA_KEY_ALPHABET=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+
+# CRC32/IEEE of $1 as 6 base62 characters, the same checksum as Talaria\Credential::checksum.
+talaria_collector_checksum() {
+  local material="$1"
+  local -a bytes
+  read -r -a bytes <<<"$(printf '%s' "$material" | gzip -c -n | tail -c 8 | head -c 4 | od -An -tu1)"
+  local crc=$(( bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24) ))
+  local chars=""
+  for _ in 1 2 3 4 5 6; do
+    chars="${TALARIA_KEY_ALPHABET:$((crc % 62)):1}${chars}"
+    crc=$((crc / 62))
+  done
+  printf '%s' "$chars"
+}
+
+# Cell of a tal_(pk|sk)_(prod|stg|test|dev)_<cell>_<43 base62><6 checksum> key.
+# Same grammar, cell length, and checksum checks as Talaria\Credential::parseApiKey.
+talaria_collector_key_cell() {
+  local key
+  key="$(talaria_collector_trim "$1")"
+  local pattern='^tal_(pk|sk)_(prod|stg|test|dev)_([a-z][a-z0-9]*(-[a-z0-9]+)*)_([A-Za-z0-9]{43})([A-Za-z0-9]{6})$'
+  if [[ ! "$key" =~ $pattern ]]; then
+    echo "TALARIA_API_KEY must match tal_(pk|sk)_(prod|stg|test|dev)_<cell>_<43 base62><6 checksum>." >&2
     return 1
   fi
-  printf '%s\n' "$dsn"
+  local cell="${BASH_REMATCH[3]}"
+  local check="${BASH_REMATCH[6]}"
+  if [[ ${#cell} -lt 2 || ${#cell} -gt 24 ]]; then
+    echo "Talaria cell id must be 2-24 characters." >&2
+    return 1
+  fi
+  if [[ "$(talaria_collector_checksum "${key:0:$((${#key} - 6))}")" != "$check" ]]; then
+    echo "TALARIA_API_KEY checksum is invalid." >&2
+    return 1
+  fi
+  printf '%s\n' "$cell"
+}
+
+# Ingest origin: TALARIA_URL when set, otherwise https://ingest-<cell>.newtalaria.com
+# from the key, as in Talaria\Config. A self cell needs TALARIA_URL.
+talaria_collector_ingest_url() {
+  local url="$1"
+  local key="$2"
+  local cell
+  url="$(talaria_collector_trim "$url")"
+  if [[ -n "$url" ]]; then
+    printf '%s\n' "${url%/}"
+    return 0
+  fi
+  cell="$(talaria_collector_key_cell "$key")" || return 1
+  if [[ "$cell" == "self" ]]; then
+    echo 'Talaria cell "self" has no cloud ingest host. Set TALARIA_URL.' >&2
+    return 1
+  fi
+  printf 'https://ingest-%s.newtalaria.com\n' "$cell"
+}
+
+# Ingest origin plus /otlp. A value that already ends in /otlp is kept.
+talaria_collector_endpoint() {
+  local origin="$1"
+  origin="$(talaria_collector_trim "$origin")"
+  origin="${origin%/}"
+  if [[ "$origin" != */otlp ]]; then
+    origin="${origin}/otlp"
+  fi
+  if [[ ! "$origin" =~ ^https?://[^[:space:]\'\"%]+/otlp$ ]]; then
+    echo "TALARIA_URL must be an http(s) ingest origin" >&2
+    return 1
+  fi
+  printf '%s\n' "$origin"
 }
 
 # Resource attributes are written onto the supervisord command. Reject anything
@@ -192,7 +250,9 @@ install_talaria_collector() {
     echo "Set TALARIA_API_KEY before installing the collector" >&2
     return 1
   fi
-  endpoint="$(talaria_collector_endpoint "${TALARIA_DSN:-${TALARIA_BASE_URL:-}}")" || return 1
+  local origin
+  origin="$(talaria_collector_ingest_url "${TALARIA_URL:-}" "$TALARIA_API_KEY")" || return 1
+  endpoint="$(talaria_collector_endpoint "$origin")" || return 1
   service="$(talaria_collector_attribute "service.name" "${TALARIA_SERVICE_NAME:-silverstripe}")" || return 1
   container_name="$(talaria_collector_attribute "container.name" "${TALARIA_CONTAINER_NAME:-$(hostname)}")" || return 1
   environment="$(talaria_collector_attribute "deployment.environment.name" "${TALARIA_ENVIRONMENT:-production}")" || return 1
