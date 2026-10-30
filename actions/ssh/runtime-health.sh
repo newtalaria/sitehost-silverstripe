@@ -26,7 +26,7 @@ install_talaria_runtime() {
   fi
   local installer="${SITEHOST_APP_PATH}/vendor/bin/talaria-sitehost"
   if [[ ! -f "$installer" ]]; then
-    echo "vendor/bin/talaria-sitehost is missing. Install talaria/silverstripe 2.1.1 or newer." >&2
+    echo "vendor/bin/talaria-sitehost is missing. Install talaria/silverstripe 3.0.1 or newer." >&2
     exit 1
   fi
   "$installer" install

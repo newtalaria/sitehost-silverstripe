@@ -20,8 +20,8 @@ Shared by every site in the GitHub organisation. On each secret, set repository 
 | --- | --- | --- |
 | `SITEHOST_SSH_PRIVATE_KEY` | Every deploy | The Actions login private key, including the `BEGIN` and `END` lines. |
 | `TALARIA_RELEASE_KEY` | Source maps | A Talaria key with `releases:write`. One key can serve every site. A site with its own key sets this secret on the repository or on the environment instead. |
-| `TALARIA_DSN` | Job check-ins and container logs | API origin, for example `https://api.newtalaria.com`. Used when the site contains `talaria/sitehost/monitors.json`. The collector exporter is this origin plus `/otlp`. |
-| `TALARIA_API_KEY` | Job check-ins and container logs | A project key with `monitors:write` and `logs:write`. The deploy runs `vendor/bin/talaria-sitehost install`, which registers each job once and rewrites one crontab block. The same deploy starts the log collector. The key stays in the environment. The ping token is not this key. |
+| `TALARIA_API_KEY` | Job check-ins and container logs | A secret `tal_sk_<env>_<cell>_…` key with `monitors:write` and `logs:write`. Used when the site contains `talaria/sitehost/monitors.json`. The ingest host comes from the key's cell: `https://ingest-<cell>.newtalaria.com`, and the collector exports to that host plus `/otlp`. The deploy runs `vendor/bin/talaria-sitehost install`, which registers each job once and rewrites one crontab block. The same deploy starts the log collector. The key stays in the environment. Cron lines check in with a `tal_mon_` monitor token, not this key. |
+| `TALARIA_URL` | Optional | Ingest origin override for self-host or a custom domain. Leave it unset on Talaria Cloud. A `self` cell key needs it. It is the only override. |
 | `SITEHOST_API_KEY` | SiteHost API backup | The account API key from the SiteHost control panel. Leave the key's IP allowlist empty. A key with any address listed rejects a GitHub-hosted runner, because that address changes on every job. |
 
 ### 2. Organisation variables
@@ -156,11 +156,10 @@ jobs:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
-      TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
 ```
 
-Pass `TALARIA_DSN` and `TALARIA_API_KEY` in that map. GitHub leaves an environment secret empty inside this workflow when the caller does not pass it, and the run does not report an error.
+Pass `TALARIA_API_KEY` in that map, and `TALARIA_URL` too if you override the host. GitHub leaves an environment secret empty inside this workflow when the caller does not pass it, and the run does not report an error.
 
 Another container is another name in `options` and another GitHub environment with that same name. The shared workflow takes the string it is given. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
@@ -418,7 +417,6 @@ jobs:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
-      TALARIA_DSN: ${{ secrets.TALARIA_DSN }}
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
 ```
 

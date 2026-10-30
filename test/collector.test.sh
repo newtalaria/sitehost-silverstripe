@@ -24,10 +24,13 @@ fi
 if grep -q 'on_error: send$' "$preset" || grep -q 'on_error: send ' "$preset"; then
   fail "preset still uses on_error: send"
 fi
-if ! grep -q 'X-API-Key: ${env:TALARIA_API_KEY}' "$preset"; then
+if ! grep -q 'Authorization: Bearer ${env:TALARIA_API_KEY}' "$preset"; then
   fail "preset does not read the API key from the environment"
 fi
-if grep -q 'tal_live_' "$preset"; then
+if grep -q 'X-API-Key' "$preset"; then
+  fail "preset still sends X-API-Key"
+fi
+if grep -q 'tal_[ps]k_' "$preset"; then
   fail "preset contains an API key"
 fi
 for path in \
@@ -57,11 +60,49 @@ if [[ "$endpoint" != "https://ingest.newtalaria.com/otlp" ]]; then
   fail "endpoint replaced an existing /otlp suffix: ${endpoint}"
 fi
 if talaria_collector_endpoint "not a url" >/dev/null 2>"${tmp}/endpoint.err"; then
-  fail "bare text was accepted as a DSN"
+  fail "bare text was accepted as an ingest origin"
 fi
-if ! grep -q 'TALARIA_DSN' "${tmp}/endpoint.err"; then
-  fail "DSN error did not name TALARIA_DSN"
+if ! grep -q 'TALARIA_URL' "${tmp}/endpoint.err"; then
+  fail "origin error did not name TALARIA_URL"
 fi
+
+# Host from the key's cell, as Talaria\Credential::parseApiKey and ingestUrl do.
+# Fixtures are Talaria\Credential::example() output from talaria/talaria 3.0.x.
+key_nz1="tal_sk_test_nz1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4TRbyC"
+key_au="tal_pk_prod_au-east1_Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Zx9Q09kmal"
+key_self="tal_sk_dev_self_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0w7iPd"
+origin="$(talaria_collector_ingest_url "" "$key_nz1")"
+if [[ "$origin" != "https://ingest-nz1.newtalaria.com" ]]; then
+  fail "nz1 key derived ${origin}"
+fi
+origin="$(talaria_collector_ingest_url "" "$key_au")"
+if [[ "$origin" != "https://ingest-au-east1.newtalaria.com" ]]; then
+  fail "au-east1 key derived ${origin}"
+fi
+origin="$(talaria_collector_ingest_url "  https://ingest.example.com/ " "$key_nz1")"
+if [[ "$origin" != "https://ingest.example.com" ]]; then
+  fail "TALARIA_URL did not override the key host: ${origin}"
+fi
+if talaria_collector_ingest_url "" "$key_self" >/dev/null 2>"${tmp}/self.err"; then
+  fail "a self cell derived a cloud host"
+fi
+if ! grep -q 'TALARIA_URL' "${tmp}/self.err"; then
+  fail "self cell error did not name TALARIA_URL"
+fi
+if [[ "$(talaria_collector_ingest_url "https://self.example.com" "$key_self")" != "https://self.example.com" ]]; then
+  fail "a self cell ignored TALARIA_URL"
+fi
+if talaria_collector_ingest_url "" "${key_nz1%?}0" >/dev/null 2>"${tmp}/crc.err"; then
+  fail "a key with a bad checksum was accepted"
+fi
+if ! grep -q 'checksum' "${tmp}/crc.err"; then
+  fail "checksum error did not say checksum"
+fi
+for bad in "tal_live_test" "tal_sk_live_nz1_$(printf 'a%.0s' {1..43})AAAAAA" "tal_mon_nz1_$(printf 'a%.0s' {1..43})AAAAAA" ""; do
+  if talaria_collector_ingest_url "" "$bad" >/dev/null 2>&1; then
+    fail "malformed key was accepted: ${bad}"
+  fi
+done
 if talaria_collector_attribute "service.name" "has space" >/dev/null 2>"${tmp}/attr.err"; then
   fail "attribute with a space was accepted"
 fi
@@ -83,7 +124,7 @@ command_line="$(talaria_collector_command "$app" "https://ingest.newtalaria.com/
 if [[ "$command_line" != *"--config=file:${app}/talaria/collector.yaml --set="* ]]; then
   fail "project file was not merged before --set: ${command_line}"
 fi
-if [[ "$command_line" == *"tal_live_"* ]]; then
+if [[ "$command_line" == *"tal_sk_"* ]]; then
   fail "command line contains an API key"
 fi
 
@@ -137,8 +178,8 @@ export SUPERVISOR_LOG="${tmp}/supervisor.log"
 export PATH="${tmp}/bin:${PATH}"
 export SITEHOST_APP_PATH="$app"
 export SITEHOST_SUPERVISORD="${tmp}/supervisord.conf"
-export TALARIA_DSN="https://ingest.newtalaria.com"
-export TALARIA_API_KEY="tal_live_test"
+unset TALARIA_URL
+export TALARIA_API_KEY="$key_nz1"
 export TALARIA_SERVICE_NAME="silverstripe"
 export TALARIA_CONTAINER_NAME="web"
 export TALARIA_ENVIRONMENT="test"
@@ -177,14 +218,14 @@ fi
 if ! grep -q -- "--config=file:${app}/talaria/collector.yaml" "$VALIDATE_LOG"; then
   fail "validate did not include the project file"
 fi
-if ! grep -q -- "--set=exporters.otlp_http.endpoint=https://ingest.newtalaria.com/otlp" "$VALIDATE_LOG"; then
+if ! grep -q -- "--set=exporters.otlp_http.endpoint=https://ingest-nz1.newtalaria.com/otlp" "$VALIDATE_LOG"; then
   fail "validate did not lock the endpoint"
 fi
 written="$(cat "${tmp}/supervisord.conf")"
 if [[ "$written" != *"--config=file:${app}/.talaria/collector-preset.yaml"* ]]; then
   fail "supervisord command omitted the preset"
 fi
-if [[ "$written" == *"tal_live_"* ]]; then
+if [[ "$written" == *"tal_sk_"* ]]; then
   fail "supervisord config contains the API key"
 fi
 
