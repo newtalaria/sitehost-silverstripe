@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Records container backup directories and pins the one created for this deploy.
 # The pinned path is stored on the container. The script never follows "latest".
+# SNAPSHOT_MODE=newest prints the newest dated snapshot for a restore that
+# did not name one.
 set -euo pipefail
 export LC_ALL=C
 
@@ -125,6 +127,26 @@ cleanup_deploy_files() {
   echo "Removed deploy rollback files from ${log_dir}"
 }
 
+# Print the newest dated snapshot that has application files, for a restore with no id.
+# SiteHost names each directory by date and time, such as 2026-10-19_09:43:28,
+# so the last name in sort order is the newest. Other names are not candidates.
+newest_snapshot() {
+  local name="" candidate
+  while IFS= read -r candidate; do
+    [[ "$candidate" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]] || continue
+    if [[ -d "${SITEHOST_BACKUP_ROOT%/}/${candidate}/application" && -n "$(ls -A "${SITEHOST_BACKUP_ROOT%/}/${candidate}/application")" ]]; then
+      name="$candidate"
+    fi
+  done < <(list_snapshot_names)
+  if [[ -z "$name" ]]; then
+    echo "No dated snapshot with application files under ${SITEHOST_BACKUP_ROOT}. Run the backup workflow, or pass snapshot_id." >&2
+    exit 1
+  fi
+  assert_snapshot_name "$name"
+  echo "Newest snapshot is ${name}" >&2
+  printf 'snapshot_id=%s\n' "$name"
+}
+
 case "$SNAPSHOT_MODE" in
   record)
     assert_backup_root_path
@@ -137,8 +159,12 @@ case "$SNAPSHOT_MODE" in
   cleanup)
     cleanup_deploy_files
     ;;
+  newest)
+    assert_backup_root
+    newest_snapshot
+    ;;
   *)
-    echo "SNAPSHOT_MODE must be record, pin, or cleanup" >&2
+    echo "SNAPSHOT_MODE must be record, pin, cleanup, or newest" >&2
     exit 1
     ;;
 esac

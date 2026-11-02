@@ -2,6 +2,11 @@
 #
 # Called by a site repository. The environment name and the backup choices
 # come from the caller. See README.md for secrets, variables, and the caller.
+#
+# Backups use the SiteHost API only. The local database and assets copies are
+# retained in actions/ssh but never run (Heath, 2026-11-03).
+# Talaria is optional. With no Talaria key the deploy and backup run, every
+# Talaria step is skipped, and the run shows one warning.
 
 name: Deploy to SiteHost
 
@@ -23,17 +28,21 @@ on:
         required: false
         default: false
       backup_database:
-        description: Dump the Silverstripe database on the container before changing files.
+        description: >-
+          Ignored. Local database dumps are disabled. The SiteHost API backup
+          (container_snapshot) holds the database. true prints a warning.
         type: boolean
         required: false
-        default: true
+        default: false
       backup_assets:
-        description: Copy public/assets on the container before changing files.
+        description: >-
+          Ignored. Local assets copies are disabled. The SiteHost API backup
+          (container_snapshot) holds public/assets. true prints a warning.
         type: boolean
         required: false
-        default: true
+        default: false
       test_rollback:
-        description: Fail after a successful deploy so this run's backups are restored.
+        description: Fail after a successful deploy so this run's SiteHost backup is restored.
         type: boolean
         required: false
         default: false
@@ -45,13 +54,16 @@ on:
       container_snapshot:
         description: >-
           Back up this one container through the SiteHost API before changing
-          files. Default is false while that path is tested alongside the local
-          database and assets backups. The API key must have no IP allowlist.
+          files, and restore from that backup when the deploy fails. This is
+          the only deploy backup. The API key must have no IP allowlist.
         type: boolean
         required: false
-        default: false
+        default: true
       upload_source_maps:
-        description: Build and upload JavaScript source maps, then copy the rewritten script onto the container.
+        description: >-
+          Build and upload JavaScript source maps, then copy the rewritten
+          script onto the container. Needs TALARIA_API_KEY and
+          TALARIA_RELEASE_KEY. Skipped with a warning when no Talaria key is set.
         type: boolean
         required: false
         default: false
@@ -94,15 +106,19 @@ on:
           SiteHost API key with no IP allowlist. Used when container_snapshot is true.
         required: false
       TALARIA_RELEASE_KEY:
-        description: Talaria key with releases:write. Used when upload_source_maps is true.
+        description: >-
+          Optional. tal_sk_ key with releases:write. Required when Talaria is on
+          and upload_source_maps is true.
         required: false
       TALARIA_URL:
         description: >-
           Optional ingest origin override for self-host or a custom domain. Leave unset on Talaria Cloud;
-          the host is https://ingest-<cell>.newtalaria.com from TALARIA_API_KEY.
+          the host is https://ingest-<cell>.newtalaria.com from the key.
         required: false
       TALARIA_API_KEY:
-        description: Secret tal_sk_ key with monitors:write and logs:write. Used when monitors.json is present.
+        description: >-
+          Optional. Turns Talaria on. Secret tal_sk_ key with monitors:write and
+          logs:write. Unset means the deploy runs without Talaria.
         required: false
     outputs:
       snapshot_id:
@@ -206,50 +222,75 @@ jobs:
       GIT_REMOTE: git@github.com:${{ github.repository }}.git
       SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
       POLL_INTERVAL_SECONDS: "15"
+      # Retained, disabled (Heath, 2026-11-03). The local database and assets
+      # steps below only run when this is enabled. Callers cannot change it.
+      SITEHOST_LOCAL_BACKUPS: disabled
 
     steps:
+      # Talaria is optional. This runs before any backup or file change, so a
+      # wrong key fails the run while the site is untouched. See talaria-check.sh.
+      - name: Check Talaria keys
+        id: talaria
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
+          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
+          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
+          UPLOAD_SOURCE_MAPS: ${{ inputs.upload_source_maps }}
+        with:
+          script: talaria-check.sh
+
+      - name: Warn about retired inputs
+        if: inputs.backup_database || inputs.backup_assets || inputs.container_snapshot == false
+        env:
+          BACKUP_DATABASE: ${{ inputs.backup_database }}
+          BACKUP_ASSETS: ${{ inputs.backup_assets }}
+          CONTAINER_SNAPSHOT: ${{ inputs.container_snapshot }}
+        run: |
+          if [[ "$BACKUP_DATABASE" == "true" || "$BACKUP_ASSETS" == "true" ]]; then
+            echo "::warning title=Local backups disabled::backup_database and backup_assets are ignored. The SiteHost API backup (container_snapshot) is the only deploy backup. Remove both inputs from the caller."
+          fi
+          if [[ "$CONTAINER_SNAPSHOT" != "true" ]]; then
+            echo "::warning title=No backup::container_snapshot is off, so this deploy takes no backup and a failed deploy cannot roll back."
+            {
+              echo "### Backup"
+              echo
+              echo "None. container_snapshot is off, so a failed deploy is not rolled back."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Checkout code
-        if: inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
 
       - name: Install dependencies
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         run: npm ci
 
       - name: Build the source map
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         env:
           SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
         run: bash --noprofile --norc -c "$SOURCE_MAP_COMMAND"
 
-      - name: Check source map key
-        if: success() && inputs.upload_source_maps
-        env:
-          TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$TALARIA_RELEASE_KEY" ]]; then
-            echo "TALARIA_RELEASE_KEY is not set for the ${DEPLOY_ENVIRONMENT} environment." >&2
-            echo "Set a releases:write key as a secret on that environment, the repository, or the organisation." >&2
-            echo "A variable is used only when no secret is set. The environment overrides the repository, which overrides the organisation." >&2
-            exit 1
-          fi
-
       - name: Upload source maps
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        # Best effort only when the key check could not reach Talaria.
+        continue-on-error: ${{ steps.talaria.outputs.talaria_reachable == 'false' }}
         uses: newtalaria/source-maps@v1
         with:
           path: ${{ inputs.source_map_directory }}
           silverstripe-combine-files: ${{ inputs.silverstripe_combine_files }}
         env:
           TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
+          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
 
       - name: Normalize configuration
         env:
@@ -496,20 +537,23 @@ jobs:
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
-          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
-          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
+          TALARIA_ENABLED: ${{ steps.talaria.outputs.talaria_enabled }}
+          TALARIA_REACHABLE: ${{ steps.talaria.outputs.talaria_reachable }}
+          TALARIA_URL: ${{ steps.talaria.outputs.talaria_enabled == 'true' && (secrets.TALARIA_URL || vars.TALARIA_URL) || '' }}
+          TALARIA_API_KEY: ${{ steps.talaria.outputs.talaria_enabled == 'true' && (secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY) || '' }}
           TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
-          BACKUP_DATABASE: ${{ inputs.backup_database }}
-          BACKUP_ASSETS: ${{ inputs.backup_assets }}
+          # Retained, disabled. remote-deploy.sh also ignores these.
+          BACKUP_DATABASE: "false"
+          BACKUP_ASSETS: "false"
         with:
           script: remote-deploy.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_URL TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_ENABLED TALARIA_REACHABLE TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_URL TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
 
       - name: Set TALARIA_RELEASE
         id: set-release
-        if: success() && inputs.container_snapshot
+        if: success() && inputs.container_snapshot && steps.talaria.outputs.talaria_enabled == 'true'
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
@@ -519,7 +563,7 @@ jobs:
           api_command: set-release
 
       - name: Wait for container restart
-        if: success() && inputs.container_snapshot
+        if: success() && inputs.container_snapshot && steps.talaria.outputs.talaria_enabled == 'true'
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         with:
           script: sitehost-api.sh
@@ -530,7 +574,7 @@ jobs:
 
       - name: Stage rewritten script
         id: rewritten
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         env:
           REWRITTEN_SCRIPT: ${{ inputs.rewritten_script }}
         run: |
@@ -549,7 +593,7 @@ jobs:
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
       - name: Install rewritten script
-        if: success() && inputs.upload_source_maps
+        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ env.SITEHOST_SSH_HOST }}
@@ -583,21 +627,29 @@ jobs:
         id: test-rollback
         if: success() && inputs.test_rollback
         run: |
-          echo "Test rollback is on. The deploy finished, and this step fails so the backups from this run are restored."
+          echo "Test rollback is on. The deploy finished, and this step fails so this run's SiteHost backup is restored."
           exit 1
 
       - name: Confirm php restart
         if: success()
+        env:
+          TALARIA_ENABLED: ${{ steps.talaria.outputs.talaria_enabled }}
+          CONTAINER_SNAPSHOT: ${{ inputs.container_snapshot }}
         run: |
+          if [[ "$TALARIA_ENABLED" != "true" ]]; then
+            echo "Deploy succeeded and php was restarted. Talaria was off, so .env and the container environment were not changed."
+            exit 0
+          fi
           echo "Deploy succeeded. TALARIA_RELEASE and TALARIA_COMMIT_SHA are in .env, and php was restarted."
-          if [[ "${{ inputs.container_snapshot }}" == "true" ]]; then
+          if [[ "$CONTAINER_SNAPSHOT" == "true" ]]; then
             echo "The same values were written through the SiteHost environment API, which restarted the container."
           else
             echo "If the container environment screen also sets either variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
           fi
 
+      # Retained, disabled (Heath, 2026-11-03). Local copies are no longer taken.
       - name: Discard deploy backups
-        if: success() && (inputs.backup_database || inputs.backup_assets)
+        if: env.SITEHOST_LOCAL_BACKUPS == 'enabled' && success() && (inputs.backup_database || inputs.backup_assets)
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           RESTORE_ACTION: discard
@@ -625,15 +677,18 @@ jobs:
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          # Restore the database inside the snapshot only when this run did not dump it.
-          RESTORE_SNAPSHOT_DATABASE: ${{ inputs.backup_database == false }}
+          # The SiteHost backup is the only copy, so its database is restored too.
+          RESTORE_SNAPSHOT_DATABASE: "true"
         with:
           script: remote-rollback.sh
           command_timeout: 30m
           env_names: SITEHOST_APP_PATH SITEHOST_BACKUP_ROOT RESTORE_SNAPSHOT_DATABASE
 
+      # Retained, disabled (Heath, 2026-11-03). The rollback above restores the
+      # database and public/assets from the SiteHost backup.
       - name: Restore database and assets
         if: >-
+          env.SITEHOST_LOCAL_BACKUPS == 'enabled' &&
           failure() &&
           (inputs.backup_database || inputs.backup_assets) &&
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')

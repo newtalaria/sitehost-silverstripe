@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# Deploys the exact commit over SSH. Backs up the database and public/assets
-# first when those options are on, and records which copies this run created.
+# Deploys the exact commit over SSH.
+#
+# Backups come from the SiteHost API before this script runs. The local
+# database dump and public/assets copy below are kept in the file but never
+# run: SITEHOST_LOCAL_BACKUPS is fixed to disabled (Heath, 2026-11-03).
+#
+# Talaria is optional. TALARIA_ENABLED=true writes the release to .env and runs
+# the check-in installer and log collector. Anything else skips them.
+# TALARIA_REACHABLE=false turns a Talaria install failure into a warning.
 set -euo pipefail
+
+# Retained, disabled. Backups use the SiteHost API only. This is not read from
+# the environment, so no caller input can turn the local copies back on.
+SITEHOST_LOCAL_BACKUPS=disabled
 
 if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
   # shellcheck disable=SC1091
@@ -200,6 +211,35 @@ write_rollback_manifest() {
   echo "Recorded rollback manifest ${manifest}"
 }
 
+# Write the Talaria release and run the Talaria installer, only when Talaria is on.
+# With TALARIA_REACHABLE=false the key check could not reach Talaria, so an
+# installer failure is a warning and the deploy continues.
+run_talaria_steps() {
+  if [[ "${TALARIA_ENABLED:-}" != "true" ]]; then
+    echo "Talaria is off for this deploy. Skipped TALARIA_RELEASE in .env, job check-ins, and the log collector."
+    if [[ -f "${SITEHOST_APP_PATH}/talaria/sitehost/monitors.json" ]]; then
+      echo "talaria/sitehost/monitors.json is present, but no Talaria key is set, so its jobs were not registered."
+    fi
+    return 0
+  fi
+  write_talaria_release
+  if [[ "${TALARIA_REACHABLE:-true}" == "false" ]]; then
+    if ! ( install_talaria_runtime ); then
+      echo "::warning title=Talaria install skipped::Talaria was unreachable at the key check and the installer failed. The deploy continues. Deploy again once Talaria is back."
+    fi
+    return 0
+  fi
+  install_talaria_runtime
+}
+
+if [[ "$SITEHOST_LOCAL_BACKUPS" != "enabled" ]]; then
+  if [[ "${BACKUP_DATABASE:-}" == "true" || "${BACKUP_ASSETS:-}" == "true" ]]; then
+    echo "Local database and assets backups are disabled. The SiteHost API backup is the rollback copy."
+  fi
+  BACKUP_DATABASE=false
+  BACKUP_ASSETS=false
+fi
+
 assert_absolute_path "SITEHOST_APP_PATH" "$SITEHOST_APP_PATH"
 if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "DEPLOY_SHA must be a 40 character git commit" >&2
@@ -244,8 +284,7 @@ gitc fetch origin "$DEPLOY_SHA"
 gitc checkout --force --detach "$DEPLOY_SHA"
 delete_other_branches
 build_site
-write_talaria_release
-install_talaria_runtime
+run_talaria_steps
 restart_php
 echo "Deployed ${DEPLOY_SHA} at ${SITEHOST_APP_PATH}"
 gitc rev-parse HEAD

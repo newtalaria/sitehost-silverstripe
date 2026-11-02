@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Restores or discards the database dump and assets copy recorded for this run.
+#
+# Retained, disabled (Heath, 2026-11-03). remote-deploy.sh no longer takes
+# these local copies, and the deploy workflow no longer calls this script. A
+# failed deploy restores from the SiteHost API backup with remote-rollback.sh.
 set -euo pipefail
+
+# Not read from the environment. Change it here only to bring the local path back.
+SITEHOST_LOCAL_BACKUPS=disabled
+if [[ "$SITEHOST_LOCAL_BACKUPS" != "enabled" ]]; then
+  echo "Local database and assets backups are disabled. Nothing to ${RESTORE_ACTION:-restore}."
+  exit 0
+fi
 
 if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
   # shellcheck disable=SC1091
