@@ -77,7 +77,7 @@ unset RESTORE_SNAPSHOT_DATABASE || true
 
 skipped="$(bash "$rollback")"
 if [[ "$skipped" != *"Left the snapshot database"* ]]; then
-  echo "rollback should leave the snapshot database when the local dump covers the run" >&2
+  echo "rollback should leave the snapshot database unless RESTORE_SNAPSHOT_DATABASE is true" >&2
   printf '%s\n' "$skipped" >&2
   exit 1
 fi

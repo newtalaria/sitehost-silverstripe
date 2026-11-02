@@ -3,9 +3,8 @@
 # SNAPSHOT_PATH selects that directory. When it is unset, the pin file from the
 # last backup is used. Refuses a directory named latest. When
 # RESTORE_SNAPSHOT_DATABASE=true, also restores databases/<name>.sql.gz from
-# that directory. Does not remove the local mysqldump under /container/logs.
-# That dump belongs to the local restore path. ROLLBACK_CHECK_ONLY=true checks
-# the directory and does not copy files.
+# that directory. The snapshot is a SiteHost API container backup.
+# ROLLBACK_CHECK_ONLY=true checks the directory and does not copy files.
 set -euo pipefail
 
 if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
@@ -134,5 +133,5 @@ restore_snapshot_database() {
 if [[ "${RESTORE_SNAPSHOT_DATABASE:-}" == "true" ]]; then
   restore_snapshot_database
 else
-  echo "Left the snapshot database in place. The local database backup covers this run."
+  echo "Left the snapshot database in place. RESTORE_SNAPSHOT_DATABASE is not true."
 fi
