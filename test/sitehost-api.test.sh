@@ -51,7 +51,6 @@ export SITEHOST_CLIENT_ID="17"
 export SITEHOST_SERVER="ch-servername"
 export BACKUP_LABEL="predeploy-1-1-0123456789abcdef0123456789abcdef01234567"
 unset SITEHOST_STACK || true
-unset SITEHOST_SERVICE || true
 
 : > "$CURL_LOG"
 unset SITEHOST_CONTAINER || true
@@ -156,22 +155,18 @@ if ! grep -q '/cloud/stack/backup.json' "$CURL_LOG"; then
   exit 1
 fi
 
-export SITEHOST_SERVICE="example.nz"
 : > "$CURL_LOG"
-bash "$api" backup >/dev/null
-if ! grep -qx 'containers\[0\]=cce6c3ce72078711' "$CURL_LOG"; then
-  echo "a hostname in SITEHOST_SERVICE must stay off the container field" >&2
+TALARIA_RELEASE="main@0123456" TALARIA_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
+  bash "$api" set-release >/dev/null
+if ! grep -qx 'service=cce6c3ce72078711' "$CURL_LOG" || ! grep -qx 'project=cce6c3ce72078711' "$CURL_LOG"; then
+  echo "set-release did not send the stack id as the project and the service" >&2
+  cat "$CURL_LOG" >&2
   exit 1
 fi
-
-export SITEHOST_SERVICE="worker"
-: > "$CURL_LOG"
-bash "$api" backup >/dev/null
-if ! grep -qx 'containers\[0\]=worker' "$CURL_LOG"; then
-  echo "SITEHOST_SERVICE should name one container on a multi-container stack" >&2
+if grep -qx 'service=example.nz' "$CURL_LOG"; then
+  echo "set-release sent the hostname as the service" >&2
   exit 1
 fi
-unset SITEHOST_SERVICE
 
 : > "$CURL_LOG"
 set +e

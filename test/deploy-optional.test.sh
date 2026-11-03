@@ -64,7 +64,7 @@ run_deploy() {
   set -e
 }
 
-# 1. No Talaria, and a caller that still asks for local backups.
+# 1. No Talaria, and BACKUP_* set on the container: the retained local backup code stays off.
 run_deploy BACKUP_DATABASE=true BACKUP_ASSETS=true
 [[ "$status" -eq 0 ]] || fail "a deploy without Talaria should succeed" "$out"
 [[ "$out" == *"Local database and assets backups are disabled"* ]] || fail "should say local backups are disabled" "$out"

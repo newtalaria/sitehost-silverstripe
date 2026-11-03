@@ -56,10 +56,6 @@ if [[ ! "$port" =~ ^[0-9]+$ ]]; then
 fi
 container="$(trim "${SITEHOST_CONTAINER:-}")"
 stack="$(trim "${SITEHOST_STACK:-}")"
-service="$(trim "${SITEHOST_SERVICE:-}")"
-if [[ -z "$service" ]]; then
-  service="$container"
-fi
 app_path="$(trim "${SITEHOST_APP_PATH:-}")"
 backup_root="$(trim "${SITEHOST_BACKUP_ROOT:-}")"
 if [[ -z "$app_path" ]]; then
@@ -79,7 +75,6 @@ mask_block "$api_key"
   printf 'SITEHOST_SSH_HOST_FINGERPRINT=%s\n' "$(trim "${SITEHOST_SSH_HOST_FINGERPRINT_RAW:-}")"
   printf 'SITEHOST_CLIENT_ID=%s\n' "$(trim "${SITEHOST_CLIENT_ID:-}")"
   printf 'SITEHOST_SERVER=%s\n' "$(trim "${SITEHOST_SERVER:-}")"
-  printf 'SITEHOST_SERVICE=%s\n' "$service"
   printf 'SITEHOST_STACK=%s\n' "$stack"
   printf 'SITEHOST_CONTAINER=%s\n' "$container"
   printf 'SITEHOST_APP_PATH=%s\n' "$app_path"

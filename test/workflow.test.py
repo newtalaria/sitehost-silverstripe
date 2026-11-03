@@ -29,18 +29,25 @@ steps = job["steps"]
 by_name = {s["name"]: s for s in steps}
 order = [s["name"] for s in steps]
 
-# Local backups: inputs kept for old callers, ignored, and the steps cannot run.
-check(inputs["backup_database"]["default"] is False, "backup_database should default to false")
-check(inputs["backup_assets"]["default"] is False, "backup_assets should default to false")
-check("Ignored" in inputs["backup_database"]["description"], "backup_database should say it is ignored")
+# Local backups: no caller input, and the retained steps cannot run.
+for name in ("backup_database", "backup_assets"):
+    check(name not in inputs, f"{name} should not be a deploy input")
+deploy_text = (root / ".github" / "workflows" / "deploy.yml").read_text()
+check("inputs.backup_" not in deploy_text, "deploy.yml should not read the removed backup inputs")
 check(job["env"].get("SITEHOST_LOCAL_BACKUPS") == "disabled", "SITEHOST_LOCAL_BACKUPS must be disabled")
 for name in ("Discard deploy backups", "Restore database and assets"):
     cond = str(by_name[name].get("if", ""))
     check(cond.lstrip().startswith("env.SITEHOST_LOCAL_BACKUPS == 'enabled'"), f"{name} must be behind SITEHOST_LOCAL_BACKUPS")
 deploy_env = by_name["Deploy commit"]["env"]
-check(deploy_env["BACKUP_DATABASE"] == "false", "Deploy commit must send BACKUP_DATABASE=false")
-check(deploy_env["BACKUP_ASSETS"] == "false", "Deploy commit must send BACKUP_ASSETS=false")
+for name in ("BACKUP_DATABASE", "BACKUP_ASSETS"):
+    check(name not in deploy_env, f"Deploy commit should not send {name}")
+    check(name not in by_name["Deploy commit"]["with"]["env_names"].split(), f"Deploy commit should not export {name}")
+check(str(by_name["Warn when container_snapshot is off"]["if"]) == "inputs.container_snapshot == false", "the no-backup warning should only check container_snapshot")
 check(by_name["Roll back container"]["env"]["RESTORE_SNAPSHOT_DATABASE"] == "true", "rollback must restore the snapshot database")
+
+# SITEHOST_SERVICE is gone. The API container name is always SITEHOST_STACK.
+for name in ("deploy.yml", "backup.yml", "restore.yml", "status.yml"):
+    check("SITEHOST_SERVICE" not in (root / ".github" / "workflows" / name).read_text(), f"{name} should not set SITEHOST_SERVICE")
 
 # The SiteHost API backup is on by default.
 check(inputs["container_snapshot"]["default"] is True, "container_snapshot should default to true")
@@ -61,7 +68,6 @@ talaria_steps = [
 ]
 for name in talaria_steps:
     check("steps.talaria.outputs.talaria_enabled == 'true'" in str(by_name[name].get("if", "")), f"{name} must only run when Talaria is on")
-check("Check source map key" not in by_name, "the old source map key step should be gone")
 check("talaria_reachable == 'false'" in str(by_name["Upload source maps"].get("continue-on-error", "")), "source map upload should be best effort in an outage")
 check("steps.talaria.outputs.talaria_enabled == 'true'" in deploy_env["TALARIA_API_KEY"], "TALARIA_API_KEY must only reach the container when Talaria is on")
 check("TALARIA_ENABLED" in by_name["Deploy commit"]["with"]["env_names"].split(), "Deploy commit must export TALARIA_ENABLED")

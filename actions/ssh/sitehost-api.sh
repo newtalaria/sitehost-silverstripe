@@ -123,17 +123,8 @@ assert_api_name() {
   fi
 }
 
-# The hostname is the control-panel label. On a one-container stack the API
-# container name is the same id as the stack. SITEHOST_SERVICE names one
-# container when the stack has several, and that value is not a hostname.
-api_container_name() {
-  if [[ -n "${SITEHOST_SERVICE:-}" && "$SITEHOST_SERVICE" != "$SITEHOST_CONTAINER" && "$SITEHOST_SERVICE" != *.* ]]; then
-    assert_api_name "SITEHOST_SERVICE" "$SITEHOST_SERVICE"
-    printf '%s' "$SITEHOST_SERVICE"
-    return 0
-  fi
-  printf '%s' "$SITEHOST_STACK"
-}
+# The hostname in SITEHOST_CONTAINER is the control-panel label. The API
+# container and service name is the stack id, SITEHOST_STACK.
 resolve_stack_name() {
   if [[ -z "${SITEHOST_STACK:-}" || "$SITEHOST_STACK" == "$SITEHOST_CONTAINER" || "$SITEHOST_STACK" == *.* ]]; then
     echo "SITEHOST_STACK must be the id SiteHost mounts as /container, such as cce6c3ce72078711." >&2
@@ -163,14 +154,12 @@ cmd_backup() {
   assert_api_name "SITEHOST_SERVER" "$SITEHOST_SERVER"
   assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
   resolve_stack_name
-  local container_name
-  container_name="$(api_container_name)"
   if [[ ! "$BACKUP_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$ ]]; then
     echo "BACKUP_LABEL must be 1 to 180 characters: letters, numbers, dots, underscores, and hyphens." >&2
     exit 1
   fi
 
-  echo "Requesting a SiteHost backup of container ${container_name} on stack ${SITEHOST_STACK}, server ${SITEHOST_SERVER}, label ${BACKUP_LABEL}"
+  echo "Requesting a SiteHost backup of container ${SITEHOST_STACK} on stack ${SITEHOST_STACK}, server ${SITEHOST_SERVER}, label ${BACKUP_LABEL}"
 
   local body
   body="$(sitehost_request POST "/cloud/stack/backup.json" \
@@ -178,7 +167,7 @@ cmd_backup() {
     --form "client_id=${SITEHOST_CLIENT_ID}" \
     --form "server=${SITEHOST_SERVER}" \
     --form "name=${SITEHOST_STACK}" \
-    --form "containers[0]=${container_name}" \
+    --form "containers[0]=${SITEHOST_STACK}" \
     --form "params[label]=${BACKUP_LABEL}")"
   job_from_body "$body"
 }
@@ -202,8 +191,6 @@ cmd_set_release() {
   fi
   assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
   resolve_stack_name
-  local service
-  service="$(api_container_name)"
 
   local body
   body="$(sitehost_request POST "/cloud/stack/environment/update.json" \
@@ -211,7 +198,7 @@ cmd_set_release() {
     --form "client_id=${SITEHOST_CLIENT_ID}" \
     --form "server=${SITEHOST_SERVER}" \
     --form "project=${SITEHOST_STACK}" \
-    --form "service=${service}" \
+    --form "service=${SITEHOST_STACK}" \
     --form "variables[0][name]=TALARIA_RELEASE" \
     --form "variables[0][content]=${TALARIA_RELEASE}" \
     --form "variables[1][name]=TALARIA_COMMIT_SHA" \

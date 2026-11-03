@@ -53,7 +53,6 @@ Open the environment and add these **variables**:
 | `SITEHOST_CONTAINER` | Every deploy, backup, and restore | `test.example.com` |
 | `SITEHOST_STACK` | Every deploy, backup, and restore | `cce6c3ce72078711` |
 | `SITEHOST_SITE_URL` | Every deploy and restore | `https://test.example.com` |
-| `SITEHOST_SERVICE` | Only on a stack with several containers | The one container's API name. See [Through the SiteHost API](#through-the-sitehost-api). |
 
 `SITEHOST_CONTAINER` is the hostname shown in the SiteHost panel, such as `test.example.com`. `SITEHOST_STACK` is the id SiteHost uses for that stack and, on a one-container stack, for the container itself. [Find the stack id](#find-the-stack-id) below is the step for every container.
 
@@ -157,7 +156,7 @@ More choices for the form:
         default: false
 ```
 
-Pass each one under `with:` by the same name. `backup_database` and `backup_assets` are still accepted so older callers keep working, but they do nothing. A caller that passes `true` sees a warning. Remove them.
+Pass each one under `with:` by the same name. Any other input is an error.
 
 GitHub leaves a secret empty inside this workflow when the caller does not pass it in the `secrets:` map, and GitHub reports no error. A Talaria key that is set in GitHub but missing from that map reads as no key, so the run skips Talaria with the warning above.
 
@@ -391,8 +390,6 @@ jobs:
 | `require_main_or_tag` | `false` | Fail unless the ref is `main` or a tag. |
 | `emergency_override` | `false` | With `require_main_or_tag`, deploy a ref that is not `main` or a tag. |
 | `upload_source_maps` | `false` | Talaria only. Build source maps, upload them, and copy the rewritten script onto the theme path after checkout. Skipped with the Talaria warning when no key is set. |
-| `backup_database` | `false` | Ignored. Local database dumps are disabled. `true` prints a warning. |
-| `backup_assets` | `false` | Ignored. Local assets copies are disabled. `true` prints a warning. |
 
 ## What the deploy does
 
@@ -416,11 +413,11 @@ The SiteHost API backup is the only backup this action takes. The deploy, backup
 
 ### Local copies (disabled)
 
-The local database dump (`mysqldump` into `/container/logs`) and the `public/assets` copy are disabled as of 3 November 2026. The code stays in `remote-deploy.sh` and `remote-restore.sh`, and the workflow steps stay in `deploy.yml`, behind a fixed `SITEHOST_LOCAL_BACKUPS=disabled`. No input or variable can turn them on. `backup_database` and `backup_assets` are accepted and ignored. A container backup already holds the database dump and `public/assets`.
+The local database dump (`mysqldump` into `/container/logs`) and the `public/assets` copy are disabled as of 3 November 2026. The code stays in `remote-deploy.sh` and `remote-restore.sh`, and the workflow steps stay in `deploy.yml`, behind a fixed `SITEHOST_LOCAL_BACKUPS=disabled`. No input or variable can turn them on. A container backup already holds the database dump and `public/assets`.
 
 ### Through the SiteHost API
 
-The deploy (with `container_snapshot`, on by default), the backup workflow, and the restore workflow's safety copy all call [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_STACK` is sent as the stack `name` and as `containers[0]`. On a stack with several containers, set `SITEHOST_SERVICE` to the one container's id and that value is sent as `containers[0]` instead. The action stops when the stack id is missing, because an empty container list backs up every container on the stack. [Find the stack id](#find-the-stack-id) is how the id is collected. The hostname in `SITEHOST_CONTAINER` is the panel label and is not a container name in this API.
+The deploy (with `container_snapshot`, on by default), the backup workflow, and the restore workflow's safety copy all call [`POST /cloud/stack/backup`](https://docs.sitehost.nz/api/v1.5/?action=POST&path=%2Fcloud%2Fstack%2Fbackup) for this container. `SITEHOST_STACK` is sent as the stack `name` and as `containers[0]`, and as the `project` and `service` when the deploy writes the release values. The action stops when the stack id is missing, because an empty container list backs up every container on the stack. [Find the stack id](#find-the-stack-id) is how the id is collected. The hostname in `SITEHOST_CONTAINER` is the panel label and is not a container name in this API.
 
 The API returns a scheduler job. That job id means the backup was accepted. It is not a restore id. The action polls [`/job/get`](https://docs.sitehost.nz/api/v1.5/?action=GET&path=%2Fjob%2Fget) until the job completes. SiteHost can report that job complete before the new directory shows up under `/container/backups/containers/`. The pin step checks again for up to three minutes. That path is often a symlink. The directory name is the id this action restores from, including the colons in names such as `2026-10-19_09:35:25`. The run lists the directories before the backup and keeps the single new one. A container with no backup yet has no directory there, so that list is empty and this backup is the first snapshot. It does not follow the `latest` symlink. The job summary records the id, and the workflow output `snapshot_id` is that same name. A second new directory in the same window, such as the nightly backup, stops the deploy before any file changes.
 

@@ -26,7 +26,6 @@ export SITEHOST_SERVER=" ch-server "
 export SITEHOST_SITE_URL=" https://test.example.com "
 export SITEHOST_APP_PATH=""
 export SITEHOST_BACKUP_ROOT=""
-unset SITEHOST_SERVICE || true
 
 bash "$configure"
 env_file="$(cat "$GITHUB_ENV")"
@@ -36,7 +35,6 @@ for needle in \
   "SITEHOST_SSH_USER=example" \
   "SITEHOST_CONTAINER=test.example.com" \
   "SITEHOST_STACK=cce6c3ce72078711" \
-  "SITEHOST_SERVICE=test.example.com" \
   "SITEHOST_APP_PATH=/container/application" \
   "SITEHOST_BACKUP_ROOT=/container/backups/containers" \
   "SITEHOST_SITE_URL=https://test.example.com" \
@@ -47,6 +45,10 @@ do
     exit 1
   fi
 done
+if [[ "$env_file" == *"SITEHOST_SERVICE"* ]]; then
+  echo "configure-env should not write SITEHOST_SERVICE" >&2
+  exit 1
+fi
 
 export DEPLOY_ENVIRONMENT="test"
 export REQUIRE_CONFIG="api"
