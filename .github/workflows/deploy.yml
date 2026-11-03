@@ -1,6 +1,6 @@
 # Deploy one Silverstripe site to a SiteHost container.
 #
-# Called by a site repository. The environment name and the backup choices
+# Called by a site repository. The environment name and the inputs below
 # come from the caller. See README.md for secrets, variables, and the caller.
 #
 # Backups use the SiteHost API only. The local database and assets copies are
@@ -24,20 +24,6 @@ on:
         default: false
       cleanup_stale_branches:
         description: Delete local branches on the container after checkout.
-        type: boolean
-        required: false
-        default: false
-      backup_database:
-        description: >-
-          Ignored. Local database dumps are disabled. The SiteHost API backup
-          (container_snapshot) holds the database. true prints a warning.
-        type: boolean
-        required: false
-        default: false
-      backup_assets:
-        description: >-
-          Ignored. Local assets copies are disabled. The SiteHost API backup
-          (container_snapshot) holds public/assets. true prints a warning.
         type: boolean
         required: false
         default: false
@@ -213,9 +199,8 @@ jobs:
       SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
       SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
       SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
-      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER }}
       SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
-      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_SHA: ${{ github.sha }}
       ROLLBACK_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -240,24 +225,15 @@ jobs:
         with:
           script: talaria-check.sh
 
-      - name: Warn about retired inputs
-        if: inputs.backup_database || inputs.backup_assets || inputs.container_snapshot == false
-        env:
-          BACKUP_DATABASE: ${{ inputs.backup_database }}
-          BACKUP_ASSETS: ${{ inputs.backup_assets }}
-          CONTAINER_SNAPSHOT: ${{ inputs.container_snapshot }}
+      - name: Warn when container_snapshot is off
+        if: inputs.container_snapshot == false
         run: |
-          if [[ "$BACKUP_DATABASE" == "true" || "$BACKUP_ASSETS" == "true" ]]; then
-            echo "::warning title=Local backups disabled::backup_database and backup_assets are ignored. The SiteHost API backup (container_snapshot) is the only deploy backup. Remove both inputs from the caller."
-          fi
-          if [[ "$CONTAINER_SNAPSHOT" != "true" ]]; then
-            echo "::warning title=No backup::container_snapshot is off, so this deploy takes no backup and a failed deploy cannot roll back."
-            {
-              echo "### Backup"
-              echo
-              echo "None. container_snapshot is off, so a failed deploy is not rolled back."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "::warning title=No backup::container_snapshot is off, so this deploy takes no backup and a failed deploy cannot roll back."
+          {
+            echo "### Backup"
+            echo
+            echo "None. container_snapshot is off, so a failed deploy is not rolled back."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout code
         if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
@@ -346,10 +322,6 @@ jobs:
           fi
           container="$(trim "${SITEHOST_CONTAINER:-}")"
           stack="$(trim "${SITEHOST_STACK:-}")"
-          service="$(trim "${SITEHOST_SERVICE:-}")"
-          if [[ -z "$service" ]]; then
-            service="$container"
-          fi
           app_path="$(trim "${SITEHOST_APP_PATH:-}")"
           backup_root="$(trim "${SITEHOST_BACKUP_ROOT:-}")"
           if [[ -z "$app_path" ]]; then
@@ -369,7 +341,6 @@ jobs:
             printf 'SITEHOST_SSH_HOST_FINGERPRINT=%s\n' "$(trim "${SITEHOST_SSH_HOST_FINGERPRINT_RAW:-}")"
             printf 'SITEHOST_CLIENT_ID=%s\n' "$(trim "${SITEHOST_CLIENT_ID:-}")"
             printf 'SITEHOST_SERVER=%s\n' "$(trim "${SITEHOST_SERVER:-}")"
-            printf 'SITEHOST_SERVICE=%s\n' "$service"
             printf 'SITEHOST_STACK=%s\n' "$stack"
             printf 'SITEHOST_CONTAINER=%s\n' "$container"
             printf 'SITEHOST_APP_PATH=%s\n' "$app_path"
@@ -543,13 +514,10 @@ jobs:
           TALARIA_API_KEY: ${{ steps.talaria.outputs.talaria_enabled == 'true' && (secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY) || '' }}
           TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
-          # Retained, disabled. remote-deploy.sh also ignores these.
-          BACKUP_DATABASE: "false"
-          BACKUP_ASSETS: "false"
         with:
           script: remote-deploy.sh
           command_timeout: 30m
-          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_ENABLED TALARIA_REACHABLE TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_URL TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES BACKUP_DATABASE BACKUP_ASSETS ROLLBACK_RUN_ID
+          env_names: SITEHOST_APP_PATH GIT_REMOTE DEPLOY_SHA TALARIA_ENABLED TALARIA_REACHABLE TALARIA_RELEASE TALARIA_COMMIT_SHA TALARIA_URL TALARIA_API_KEY TALARIA_INSTALL_PROBE CLEANUP_STALE_BRANCHES ROLLBACK_RUN_ID
 
       - name: Set TALARIA_RELEASE
         id: set-release
@@ -649,7 +617,7 @@ jobs:
 
       # Retained, disabled (Heath, 2026-11-03). Local copies are no longer taken.
       - name: Discard deploy backups
-        if: env.SITEHOST_LOCAL_BACKUPS == 'enabled' && success() && (inputs.backup_database || inputs.backup_assets)
+        if: env.SITEHOST_LOCAL_BACKUPS == 'enabled' && success()
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           RESTORE_ACTION: discard
@@ -690,7 +658,6 @@ jobs:
         if: >-
           env.SITEHOST_LOCAL_BACKUPS == 'enabled' &&
           failure() &&
-          (inputs.backup_database || inputs.backup_assets) &&
           (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.test-rollback.outcome == 'failure')
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:

@@ -58,9 +58,8 @@ jobs:
       SITEHOST_BACKUP_ROOT: ${{ vars.SITEHOST_BACKUP_ROOT || '/container/backups/containers' }}
       SITEHOST_CLIENT_ID: ${{ vars.SITEHOST_CLIENT_ID }}
       SITEHOST_SERVER: ${{ vars.SITEHOST_SERVER }}
-      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
+      SITEHOST_CONTAINER: ${{ vars.SITEHOST_CONTAINER }}
       SITEHOST_STACK: ${{ vars.SITEHOST_STACK }}
-      SITEHOST_SERVICE: ${{ vars.SITEHOST_SERVICE || vars.SITEHOST_CONTAINER || vars.SITEHOST_STACK }}
       SITEHOST_SITE_URL: ${{ vars.SITEHOST_SITE_URL }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
 
