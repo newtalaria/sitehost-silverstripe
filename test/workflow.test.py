@@ -53,7 +53,16 @@ for name in ("deploy.yml", "backup.yml", "restore.yml", "status.yml"):
 check(inputs["container_snapshot"]["default"] is True, "container_snapshot should default to true")
 
 # Talaria: checked first, before any backup or file change.
-check(order[0] == "Check Talaria keys", "Check Talaria keys must be the first step")
+check(order[0] == "Find Talaria key", "Find Talaria key must be the first step")
+check(by_name["Find Talaria key"]["with"]["script"] == "talaria-resolve.sh", "Find Talaria key must run talaria-resolve.sh")
+check(by_name["Find Talaria key"].get("id") == "talaria-key", "Find Talaria key must have id talaria-key")
+check("continue-on-error" not in by_name["Find Talaria key"], "Find Talaria key handles its own errors")
+check(order[1] == "Check Talaria keys", "Check Talaria keys must run right after the key lookup")
+check_env = by_name["Check Talaria keys"].get("env", {})
+for name in ("TALARIA_API_KEY", "TALARIA_URL"):
+    # A step env would hide the value talaria-resolve.sh wrote to GITHUB_ENV.
+    check(name not in check_env, f"Check Talaria keys must read the resolved {name}, not set its own")
+    check(f"env.{name}" in deploy_env[name], f"Deploy commit must send the resolved {name}")
 check(by_name["Check Talaria keys"]["with"]["script"] == "talaria-check.sh", "Check Talaria keys must run talaria-check.sh")
 talaria_steps = [
     "Checkout code",
@@ -87,6 +96,7 @@ check(rsteps.index("Find newest snapshot") < rsteps.index("Start container backu
 # The SSH action accepts the new script and exposes its outputs.
 action = yaml.safe_load((root / "actions" / "ssh" / "action.yml").read_text())
 check("talaria_enabled" in action["outputs"] and "talaria_reachable" in action["outputs"], "action must expose the Talaria outputs")
+check("talaria_key_source" in action["outputs"], "action must expose the Talaria key source")
 
 if errors:
     for e in errors:

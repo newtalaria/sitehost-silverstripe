@@ -48,8 +48,9 @@ on:
       upload_source_maps:
         description: >-
           Build and upload JavaScript source maps, then copy the rewritten
-          script onto the container. Needs TALARIA_API_KEY and
-          TALARIA_RELEASE_KEY. Skipped with a warning when no Talaria key is set.
+          script onto the container. Needs TALARIA_RELEASE_KEY, plus
+          TALARIA_API_KEY in the workflow or on the SiteHost container.
+          Skipped with a warning when no Talaria key is set.
         type: boolean
         required: false
         default: false
@@ -104,7 +105,8 @@ on:
       TALARIA_API_KEY:
         description: >-
           Optional. Turns Talaria on. Secret tal_sk_ key with monitors:write and
-          logs:write. Unset means the deploy runs without Talaria.
+          logs:write. When unset here, the deploy reads TALARIA_API_KEY from the
+          SiteHost container environment. Unset in both means no Talaria.
         required: false
     outputs:
       snapshot_id:
@@ -212,15 +214,27 @@ jobs:
       SITEHOST_LOCAL_BACKUPS: disabled
 
     steps:
+      # TALARIA_API_KEY comes from the workflow when set, otherwise from the
+      # SiteHost container environment. A failed lookup only warns. The result
+      # is written to GITHUB_ENV for the steps below. See talaria-resolve.sh.
+      - name: Find Talaria key
+        id: talaria-key
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
+          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
+          SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY || vars.SITEHOST_API_KEY }}
+        with:
+          script: talaria-resolve.sh
+
       # Talaria is optional. This runs before any backup or file change, so a
       # wrong key fails the run while the site is untouched. See talaria-check.sh.
+      # TALARIA_API_KEY and TALARIA_URL are the values found above.
       - name: Check Talaria keys
         id: talaria
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
-          TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
           TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY || vars.TALARIA_RELEASE_KEY }}
-          TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
           UPLOAD_SOURCE_MAPS: ${{ inputs.upload_source_maps }}
         with:
           script: talaria-check.sh
@@ -510,8 +524,8 @@ jobs:
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
           TALARIA_ENABLED: ${{ steps.talaria.outputs.talaria_enabled }}
           TALARIA_REACHABLE: ${{ steps.talaria.outputs.talaria_reachable }}
-          TALARIA_URL: ${{ steps.talaria.outputs.talaria_enabled == 'true' && (secrets.TALARIA_URL || vars.TALARIA_URL) || '' }}
-          TALARIA_API_KEY: ${{ steps.talaria.outputs.talaria_enabled == 'true' && (secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY) || '' }}
+          TALARIA_URL: ${{ steps.talaria.outputs.talaria_enabled == 'true' && env.TALARIA_URL || '' }}
+          TALARIA_API_KEY: ${{ steps.talaria.outputs.talaria_enabled == 'true' && env.TALARIA_API_KEY || '' }}
           TALARIA_INSTALL_PROBE: ${{ vars.TALARIA_INSTALL_PROBE }}
           CLEANUP_STALE_BRANCHES: ${{ inputs.cleanup_stale_branches }}
         with:

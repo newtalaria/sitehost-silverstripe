@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SiteHost API v1.5 helper for one container backup, release env updates, and job polling.
+# SiteHost API v1.5 helper for one container backup, release env updates,
+# reading the container environment, and job polling.
 # The backup call returns a scheduler job. That job id is not a restore handle.
 # Reads secrets from the environment and does not print the API key.
 set -euo pipefail
@@ -8,7 +9,7 @@ API_BASE="${SITEHOST_API_BASE:-https://api.sitehost.nz/1.5}"
 
 # Print how to run this script, then exit.
 usage() {
-  echo "Usage: sitehost-api.sh backup|set-release|poll-job TYPE ID [TIMEOUT_SECONDS]" >&2
+  echo "Usage: sitehost-api.sh backup|set-release|get-env OUTFILE|poll-job TYPE ID [TIMEOUT_SECONDS]" >&2
   exit 1
 }
 
@@ -126,7 +127,7 @@ assert_api_name() {
 # The hostname in SITEHOST_CONTAINER is the control-panel label. The API
 # container and service name is the stack id, SITEHOST_STACK.
 resolve_stack_name() {
-  if [[ -z "${SITEHOST_STACK:-}" || "$SITEHOST_STACK" == "$SITEHOST_CONTAINER" || "$SITEHOST_STACK" == *.* ]]; then
+  if [[ -z "${SITEHOST_STACK:-}" || "$SITEHOST_STACK" == "${SITEHOST_CONTAINER:-}" || "$SITEHOST_STACK" == *.* ]]; then
     echo "SITEHOST_STACK must be the id SiteHost mounts as /container, such as cce6c3ce72078711." >&2
     echo "SITEHOST_CONTAINER stays the hostname, such as test.example.com." >&2
     echo "SSH in and run:" >&2
@@ -206,6 +207,41 @@ cmd_set_release() {
   job_from_body "$body"
 }
 
+# Write the container environment to OUTFILE as a JSON array of
+# {name, content}. GET /cloud/stack/environment/get.json reads the variables
+# set in the control panel ([container name].env). The values are secrets, so
+# this never prints them. Only the caller reads the file.
+cmd_get_env() {
+  local outfile="${1:-}"
+  require_env SITEHOST_API_KEY
+  require_env SITEHOST_CLIENT_ID
+  require_env SITEHOST_SERVER
+  if [[ -z "$outfile" ]]; then
+    usage
+  fi
+  if [[ ! "$SITEHOST_CLIENT_ID" =~ ^[0-9]{1,12}$ ]]; then
+    echo "SITEHOST_CLIENT_ID must be the numeric client id." >&2
+    exit 1
+  fi
+  assert_api_name "SITEHOST_SERVER" "$SITEHOST_SERVER"
+  resolve_stack_name
+
+  local body
+  body="$(sitehost_request GET "/cloud/stack/environment/get.json" \
+    --get \
+    --data-urlencode "apikey=${SITEHOST_API_KEY}" \
+    --data-urlencode "client_id=${SITEHOST_CLIENT_ID}" \
+    --data-urlencode "server=${SITEHOST_SERVER}" \
+    --data-urlencode "project=${SITEHOST_STACK}" \
+    --data-urlencode "service=${SITEHOST_STACK}")"
+  if ! jq -e '.return | type == "array"' >/dev/null 2>&1 <<<"$body"; then
+    echo "SiteHost environment response did not include a variable list" >&2
+    exit 1
+  fi
+  (umask 077 && jq -c '[.return[] | {name: (.name // "" | tostring), content: (.content // "" | tostring)}]' <<<"$body" > "$outfile")
+  echo "Read the environment of container ${SITEHOST_STACK} on server ${SITEHOST_SERVER}"
+}
+
 # Poll a SiteHost job until it completes, fails, or the timeout is reached.
 cmd_poll_job() {
   require_env SITEHOST_API_KEY
@@ -264,7 +300,7 @@ cmd_poll_job() {
   done
 }
 
-# Run backup, set-release, or poll-job from the first argument.
+# Run backup, set-release, get-env, or poll-job from the first argument.
 main() {
   require_commands
   local command="${1:-}"
@@ -279,6 +315,10 @@ main() {
     set-release)
       [[ $# -eq 0 ]] || usage
       cmd_set_release
+      ;;
+    get-env)
+      [[ $# -eq 1 ]] || usage
+      cmd_get_env "$1"
       ;;
     poll-job)
       [[ $# -eq 2 || $# -eq 3 ]] || usage
