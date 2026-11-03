@@ -2,7 +2,7 @@
 # Restores one container's application files from a snapshot directory.
 # SNAPSHOT_PATH selects that directory. When it is unset, the pin file from the
 # last backup is used. Refuses a directory named latest. When
-# RESTORE_SNAPSHOT_DATABASE=true, also restores databases/<name>.sql.gz from
+# RESTORE_SNAPSHOT_DATABASE=true, also restores databases/mysql8-<name>.sql.gz (or <name>.sql.gz) from
 # that directory. The snapshot is a SiteHost API container backup.
 # ROLLBACK_CHECK_ONLY=true checks the directory and does not copy files.
 set -euo pipefail
@@ -98,7 +98,32 @@ echo "Restoring application files from ${app_snapshot}"
 rsync --archive --stats --delete "${app_snapshot}/" "${SITEHOST_APP_PATH}/"
 
 # Restore the database SiteHost stored inside this snapshot.
-# The dump name is the Silverstripe database name plus .sql.gz.
+# SiteHost names the dump after the database, with the database engine as a
+# prefix, such as mysql8-<name>.sql.gz. A plain <name>.sql.gz is also accepted.
+# More than one prefixed match is refused rather than guessed.
+find_snapshot_dump() {
+  local db_dir="$1" name="$2" candidate
+  local matches=()
+  if [[ -f "${db_dir}/${name}.sql.gz" && ! -L "${db_dir}/${name}.sql.gz" ]]; then
+    printf '%s\n' "${db_dir}/${name}.sql.gz"
+    return 0
+  fi
+  [[ -d "$db_dir" ]] || return 1
+  while IFS= read -r candidate; do
+    [[ -L "$candidate" || ! -f "$candidate" ]] && continue
+    matches+=("$candidate")
+  done < <(find "$db_dir" -mindepth 1 -maxdepth 1 -name "*-${name}.sql.gz" | sort)
+  if [[ "${#matches[@]}" -eq 1 ]]; then
+    printf '%s\n' "${matches[0]}"
+    return 0
+  fi
+  if [[ "${#matches[@]}" -gt 1 ]]; then
+    echo "More than one dump for ${name} in ${db_dir}:" >&2
+    printf '%s\n' "${matches[@]}" >&2
+  fi
+  return 1
+}
+
 restore_snapshot_database() {
   local db_dir dump_file
   require_database_env restore
@@ -107,8 +132,9 @@ restore_snapshot_database() {
     exit 1
   fi
   db_dir="${SNAPSHOT_PATH}/databases"
-  dump_file="${db_dir}/${SS_DATABASE_NAME}.sql.gz"
-  if [[ -L "$dump_file" || ! -f "$dump_file" ]]; then
+  dump_file="$(find_snapshot_dump "$db_dir" "$SS_DATABASE_NAME" || true)"
+  if [[ -z "$dump_file" ]]; then
+    dump_file="${db_dir}/${SS_DATABASE_NAME}.sql.gz"
     echo "Snapshot database dump not found: ${dump_file}" >&2
     if [[ -d "$db_dir" ]]; then
       echo "Database dumps in this snapshot:" >&2
