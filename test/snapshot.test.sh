@@ -169,7 +169,7 @@ fi
 missing_root="${tmp}/missing-backups"
 export SITEHOST_BACKUP_ROOT="$missing_root"
 export DEPLOY_LOG_DIR="${tmp}/logs-missing"
-recorded="$(SNAPSHOT_MODE=record bash "$snapshots")"
+recorded="$(BACKUP_ROOT_WAIT_SECONDS=0 SNAPSHOT_MODE=record bash "$snapshots")"
 if [[ "$recorded" != *"does not exist yet"* ]]; then
   echo "record should allow a missing backup root" >&2
   printf '%s\n' "$recorded" >&2
@@ -223,6 +223,23 @@ if [[ "$delayed" != "snapshot_id=2026-10-19_09:35:25" ]]; then
   echo "pin should wait until the snapshot directory appears" >&2
   printf '%s\n' "$delayed" >&2
   cat "${tmp}/delay.err" >&2
+  exit 1
+fi
+
+mount_root="${tmp}/automount-backups"
+export SITEHOST_BACKUP_ROOT="$mount_root"
+export DEPLOY_LOG_DIR="${tmp}/logs-automount"
+(
+  sleep 1
+  mkdir -p "$mount_root/2026-11-02_14:35:38/application"
+  printf 'nightly\n' > "$mount_root/2026-11-02_14:35:38/application/index.php"
+) &
+mounted="$(BACKUP_ROOT_WAIT_SECONDS=5 BACKUP_ROOT_POLL_SECONDS=1 SNAPSHOT_MODE=record bash "$snapshots" 2>"${tmp}/automount.err")"
+wait || true
+if [[ "$mounted" != *"Recorded 1 existing snapshot directories"* ]]; then
+  echo "record should wait for a backup root that mounts late" >&2
+  printf '%s\n' "$mounted" >&2
+  cat "${tmp}/automount.err" >&2
   exit 1
 fi
 
