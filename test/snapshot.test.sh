@@ -166,6 +166,26 @@ if [[ "$(cat "$MYSQL_ARGS")" != *"--host=db.example"* || "$(cat "$MYSQL_ARGS")" 
   exit 1
 fi
 
+rm -f "${SNAPSHOT_PATH}/databases/silverstripe.sql.gz"
+printf 'SELECT 8;\n' | gzip -c > "${SNAPSHOT_PATH}/databases/mysql8-silverstripe.sql.gz"
+prefixed="$(bash "$rollback")"
+if [[ "$prefixed" != *"mysql8-silverstripe.sql.gz"* || "$(cat "$MYSQL_STDIN")" != "SELECT 8;" ]]; then
+  echo "rollback should restore a SiteHost dump with an engine prefix" >&2
+  printf '%s\n' "$prefixed" >&2
+  exit 1
+fi
+printf 'SELECT 5;\n' | gzip -c > "${SNAPSHOT_PATH}/databases/mysql5-silverstripe.sql.gz"
+set +e
+ambiguous="$(bash "$rollback" 2>&1)"
+ambiguous_status=$?
+set -e
+if [[ "$ambiguous_status" -eq 0 || "$ambiguous" != *"More than one dump"* ]]; then
+  echo "rollback should refuse two prefixed dumps for one database" >&2
+  printf '%s\n' "$ambiguous" >&2
+  exit 1
+fi
+rm -f "${SNAPSHOT_PATH}/databases/mysql5-silverstripe.sql.gz"
+
 missing_root="${tmp}/missing-backups"
 export SITEHOST_BACKUP_ROOT="$missing_root"
 export DEPLOY_LOG_DIR="${tmp}/logs-missing"
