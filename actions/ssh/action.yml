@@ -12,7 +12,8 @@ inputs:
       Whitelisted script: remote-deploy.sh, remote-restore.sh,
       remote-rollback.sh, remote-snapshots.sh, remote-status.sh,
       remote-restart-php.sh, configure-env.sh, require-config.sh,
-      sitehost-api.sh, or talaria-check.sh. The last four run on the runner.
+      sitehost-api.sh, talaria-resolve.sh, or talaria-check.sh. The last five
+      run on the runner.
     required: true
   command_timeout:
     description: Timeout passed to the SSH action for a remote script.
@@ -57,6 +58,9 @@ outputs:
   talaria_enabled:
     description: talaria-check.sh result. true when Talaria keys are set and valid.
     value: ${{ steps.talaria.outputs.enabled }}
+  talaria_key_source:
+    description: talaria-resolve.sh result. workflow, container, or none.
+    value: ${{ steps.talaria-resolve.outputs.source }}
   talaria_reachable:
     description: talaria-check.sh result. false when Talaria is off or could not be reached.
     value: ${{ steps.talaria.outputs.reachable }}
@@ -65,7 +69,7 @@ runs:
   steps:
     - name: Build SSH payload
       id: payload
-      if: inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh' && inputs.script != 'talaria-check.sh'
+      if: inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh' && inputs.script != 'talaria-check.sh' && inputs.script != 'talaria-resolve.sh'
       shell: bash
       env:
         SCRIPT_NAME: ${{ inputs.script }}
@@ -98,7 +102,7 @@ runs:
 
     - name: Run remote script
       id: remote
-      if: success() && inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh' && inputs.script != 'talaria-check.sh'
+      if: success() && inputs.script != 'sitehost-api.sh' && inputs.script != 'configure-env.sh' && inputs.script != 'require-config.sh' && inputs.script != 'talaria-check.sh' && inputs.script != 'talaria-resolve.sh'
       uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
       with:
         host: ${{ env.SITEHOST_SSH_HOST }}
@@ -147,6 +151,12 @@ runs:
       if: success() && inputs.script == 'require-config.sh'
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/require-config.sh"
+
+    - name: Find Talaria key
+      id: talaria-resolve
+      if: success() && inputs.script == 'talaria-resolve.sh'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/talaria-resolve.sh"
 
     - name: Check Talaria keys
       id: talaria

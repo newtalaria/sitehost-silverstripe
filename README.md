@@ -5,7 +5,7 @@ Deploys one Silverstripe site onto a SiteHost container. The same repository can
 Pin `@v1`.
 
 - **Backups use the SiteHost API only.** Each deploy asks SiteHost to back up the container first, and a failed deploy restores from that backup. The older local database dump and `public/assets` copy are still in the code, but they are disabled and no input turns them on. See [Backups](#backups).
-- **Talaria is optional.** With no Talaria key, the deploy and backup still run, Talaria steps are skipped, and the run shows one warning. Set `TALARIA_API_KEY` to turn on releases, source maps, job check-ins, and the log collector. See [Talaria (optional)](#talaria-optional).
+- **Talaria is optional.** With no Talaria key, the deploy and backup still run, Talaria steps are skipped, and the run shows one warning. Set `TALARIA_API_KEY` on the SiteHost container, or in GitHub, to turn on releases, source maps, job check-ins, and the log collector. See [Talaria (optional)](#talaria-optional).
 
 ## Set up a site
 
@@ -23,8 +23,8 @@ Shared by every site in the GitHub organisation. On each secret, set repository 
 | --- | --- | --- |
 | `SITEHOST_SSH_PRIVATE_KEY` | Every deploy | The Actions login private key, including the `BEGIN` and `END` lines. |
 | `SITEHOST_API_KEY` | Every deploy, backup, and restore | The account API key from the SiteHost control panel. Leave the key's IP allowlist empty. A key with any address listed rejects a GitHub-hosted runner, because that address changes on every job. |
-| `TALARIA_API_KEY` | Optional. Turns Talaria on | See [Talaria (optional)](#talaria-optional). |
-| `TALARIA_RELEASE_KEY` | Optional. Source maps | See [Talaria (optional)](#talaria-optional). |
+| `TALARIA_API_KEY` | Optional. Not needed when it is set on the SiteHost container | See [Talaria (optional)](#talaria-optional). |
+| `TALARIA_RELEASE_KEY` | Optional. Source maps and the release upload only | See [Talaria (optional)](#talaria-optional). |
 | `TALARIA_URL` | Optional | See [Talaria (optional)](#talaria-optional). |
 
 ### 2. Organisation variables
@@ -137,7 +137,7 @@ jobs:
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
 ```
 
-The run shows one warning, `Talaria keys are not set, so the Talaria integration is skipped`, and the deploy carries on. To add Talaria, pass its keys as well. [Talaria (optional)](#talaria-optional) has the full caller.
+When `TALARIA_API_KEY` is set on the SiteHost container, this caller already turns Talaria on. The deploy reads the key through the SiteHost API. With no key anywhere, the run shows one warning, `Talaria keys are not set, so the Talaria integration is skipped`, and the deploy carries on. [Talaria (optional)](#talaria-optional) has the full caller.
 
 More choices for the form:
 
@@ -158,7 +158,7 @@ More choices for the form:
 
 Pass each one under `with:` by the same name. Any other input is an error.
 
-GitHub leaves a secret empty inside this workflow when the caller does not pass it in the `secrets:` map, and GitHub reports no error. A Talaria key that is set in GitHub but missing from that map reads as no key, so the run skips Talaria with the warning above.
+GitHub leaves a secret empty inside this workflow when the caller does not pass it in the `secrets:` map, and GitHub reports no error. A Talaria key that is set in GitHub but missing from that map reads as not set in the workflow. The deploy then uses the container's `TALARIA_API_KEY`, or skips Talaria with the warning above when the container has none.
 
 Another container is another name in `options` and another GitHub environment with that same name. The shared workflow takes the string it is given. Put rules that depend on a name in the caller, as `require_main_or_tag` does above.
 
@@ -170,11 +170,27 @@ Run a deploy from the Actions tab with **Run workflow**. Pick the environment. T
 
 The deploy, backup, restore, and status workflows all run without Talaria. Talaria adds the release name in `.env`, source maps, job check-ins, and the container log collector.
 
+To use Talaria, set `TALARIA_API_KEY` and `TALARIA_BROWSER_API_KEY` in the SiteHost container's environment variables in the control panel. The site reads both from there, and the deploy reads `TALARIA_API_KEY` from there too, so GitHub does not need a copy. Add `TALARIA_RELEASE_KEY` as a GitHub secret only when `upload_source_maps` is on. Without any Talaria key, leave them all out and the deploy shows one warning.
+
+### Where the deploy finds `TALARIA_API_KEY`
+
+The first deploy step looks for the key in this order, before the key check and before any backup or file change:
+
+1. `TALARIA_API_KEY` passed to the workflow, as a secret or a variable. This wins when it is set.
+2. `TALARIA_API_KEY` in the SiteHost container environment. The deploy reads it with the SiteHost API, `GET /cloud/stack/environment/get.json`, using `SITEHOST_API_KEY`, `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, and `SITEHOST_STACK` (project and service). This sees the variables set in the control panel. It does not see variables only in the application's `.env` file.
+3. Neither. Talaria is skipped with one warning.
+
+`TALARIA_URL` follows the same order, but a container `TALARIA_URL` is used only when the key also came from the container. The job summary says which source was used (`workflow` or `SiteHost container`) and shows at most the first 8 characters of the key. A value read from the container is masked with `::add-mask::` before anything else runs.
+
+If the SiteHost API lookup fails, for example an HTTP error, an API key without access to the container, or a missing `SITEHOST_API_KEY`, the run warns `Talaria key lookup failed` and treats the container key as not set. The lookup never blocks the backup or the deploy. A key that is found but is wrong still fails the key check below.
+
+`TALARIA_RELEASE_KEY` is only read from GitHub. It is used for source maps and the release upload.
+
 ### Keys
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `TALARIA_API_KEY` | Secret | Turns Talaria on. A secret `tal_sk_<env>_<cell>_…` key with `monitors:write` and `logs:write`. The ingest host comes from the key's cell: `https://ingest-<cell>.newtalaria.com`, and the collector exports to that host plus `/otlp`. When the site contains `talaria/sitehost/monitors.json`, or `TALARIA_INSTALL_PROBE` is `true`, the deploy runs `vendor/bin/talaria-sitehost install` (talaria/silverstripe 3.0.1 or newer). That registers each job once, rewrites one crontab block, and starts the log collector. Cron lines check in with a `tal_mon_` monitor token, not this key. |
+| `TALARIA_API_KEY` | Secret, or the SiteHost container environment | Turns Talaria on. Optional in GitHub when it is set on the container. A secret `tal_sk_<env>_<cell>_…` key with `monitors:write` and `logs:write`. The ingest host comes from the key's cell: `https://ingest-<cell>.newtalaria.com`, and the collector exports to that host plus `/otlp`. When the site contains `talaria/sitehost/monitors.json`, or `TALARIA_INSTALL_PROBE` is `true`, the deploy runs `vendor/bin/talaria-sitehost install` (talaria/silverstripe 3.0.1 or newer). That registers each job once, rewrites one crontab block, and starts the log collector. Cron lines check in with a `tal_mon_` monitor token, not this key. |
 | `TALARIA_RELEASE_KEY` | Secret | Needed when `upload_source_maps` is on. A `tal_sk_` key with `releases:write`. One key can serve every site. |
 | `TALARIA_URL` | Secret or variable | Ingest origin override for self-host or a custom domain. Leave it unset on Talaria Cloud. A `self` cell key needs it. It applies to the key check, the source map upload, and the collector. |
 | `TALARIA_INSTALL_PROBE` | Variable | `true` runs the Talaria installer even without `monitors.json`. |
@@ -183,7 +199,7 @@ A secret is read first and a variable with the same name second. Variables are n
 
 ### What the run does with them
 
-The first step of the deploy checks the Talaria settings, before any backup or file change.
+The key check runs right after the lookup, on the key it found, before any backup or file change.
 
 | Settings | Result |
 | --- | --- |
@@ -211,8 +227,9 @@ jobs:
     secrets:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
-      TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
+      # Optional. Leave these out when the container sets TALARIA_API_KEY.
+      TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
       TALARIA_URL: ${{ secrets.TALARIA_URL }}
 ```
 
@@ -395,7 +412,7 @@ jobs:
 
 Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `SITEHOST_SSH_HOST_FINGERPRINT`.
 
-1. Check the Talaria settings. See [Talaria (optional)](#talaria-optional).
+1. Find `TALARIA_API_KEY` in the workflow or on the SiteHost container, then check the Talaria settings. See [Talaria (optional)](#talaria-optional).
 2. With Talaria on and `upload_source_maps` on, build and upload the source maps.
 3. When `container_snapshot` is on, back up this container through the SiteHost API and record the new snapshot directory. The deploy does not continue until that backup finishes.
 4. Fetch the exact commit and check it out detached.
@@ -437,7 +454,7 @@ The API key is `SITEHOST_API_KEY`, with no IP address on the key. `SITEHOST_CLIE
 
 Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and the source map command on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
 
-Source maps are a Talaria feature. They need `TALARIA_API_KEY` and `TALARIA_RELEASE_KEY` (see [Talaria (optional)](#talaria-optional)). With no Talaria key, `upload_source_maps` is skipped with the Talaria warning, and the theme keeps the script already on the container. The site needs a `package-lock.json` because the job runs `npm ci`.
+Source maps are a Talaria feature. They need `TALARIA_RELEASE_KEY` in GitHub and `TALARIA_API_KEY` in GitHub or on the container (see [Talaria (optional)](#talaria-optional)). With no Talaria key, `upload_source_maps` is skipped with the Talaria warning, and the theme keeps the script already on the container. The site needs a `package-lock.json` because the job runs `npm ci`.
 
 | Input | Default |
 | --- | --- |

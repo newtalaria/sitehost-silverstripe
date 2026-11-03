@@ -19,7 +19,9 @@
 # for this cell. It cannot prove releases:write or monitors:write without a
 # write, so a missing scope still fails at the step that needs it.
 #
-# Reads TALARIA_API_KEY, TALARIA_RELEASE_KEY, TALARIA_URL, UPLOAD_SOURCE_MAPS.
+# Reads TALARIA_API_KEY and TALARIA_URL as found by talaria-resolve.sh (the
+# workflow value, else the SiteHost container), plus TALARIA_RELEASE_KEY and
+# UPLOAD_SOURCE_MAPS.
 # Writes enabled=true|false and reachable=true|false to GITHUB_OUTPUT.
 # Never prints a key.
 set -euo pipefail
