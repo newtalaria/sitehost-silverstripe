@@ -207,7 +207,7 @@ The key check runs right after the lookup, on the key it found, before any backu
 | Some set, some missing | Fails and names the missing ones. `TALARIA_URL` or `TALARIA_RELEASE_KEY` without `TALARIA_API_KEY` is partial. So is `upload_source_maps` without `TALARIA_RELEASE_KEY`. |
 | Malformed key | Fails. The key must be a `tal_sk_` key with a valid cell and checksum, the same check the SDK makes. |
 | Key rejected | Fails. The check calls `GET /v1/sdk-config` on the ingest host with each key. HTTP 401 or 403 means the key is wrong, revoked, or for another cell. Any other 4xx points at `TALARIA_URL`. |
-| Talaria unreachable | Warns and continues. A timeout, connection error, 408, 429, or 5xx is treated as an outage, not a wrong key. Talaria steps then run best effort: a failed source map upload or Talaria installer is a warning, not a failed deploy. |
+| Talaria unreachable | Warns and continues. A timeout, connection error, 408, 429, or 5xx is treated as an outage, not a wrong key. A failed Talaria installer is then a warning, and the deploy continues. |
 
 Auth errors fail closed, because a wrong key is a configuration mistake that a rerun will not fix. Outages fail open, so Talaria downtime never blocks a deploy. `GET /v1/sdk-config` accepts any live key and writes nothing, so the check cannot confirm `releases:write` or `monitors:write`. A missing scope still fails at the step that needs it.
 
@@ -406,21 +406,21 @@ jobs:
 | `test_rollback` | `false` | Finish the deploy, then fail so this run's SiteHost backup is restored. |
 | `require_main_or_tag` | `false` | Fail unless the ref is `main` or a tag. |
 | `emergency_override` | `false` | With `require_main_or_tag`, deploy a ref that is not `main` or a tag. |
-| `upload_source_maps` | `false` | Talaria only. Build source maps, upload them, and copy the rewritten script onto the theme path after checkout. Skipped with the Talaria warning when no key is set. |
+| `upload_source_maps` | `false` | Talaria only. Build source maps, upload them, and copy the rewritten script onto the theme path after checkout. Skipped with the Talaria warning when no key is set. A failed build, upload, or copy warns once and the deploy continues. |
 
 ## What the deploy does
 
 Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `SITEHOST_SSH_HOST_FINGERPRINT`.
 
 1. Find `TALARIA_API_KEY` in the workflow or on the SiteHost container, then check the Talaria settings. See [Talaria (optional)](#talaria-optional).
-2. With Talaria on and `upload_source_maps` on, build and upload the source maps.
+2. With Talaria on and `upload_source_maps` on, build and upload the source maps. A failure here warns and the deploy continues.
 3. When `container_snapshot` is on, back up this container through the SiteHost API and record the new snapshot directory. The deploy does not continue until that backup finishes.
 4. Fetch the exact commit and check it out detached.
 5. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
 6. With Talaria on, write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`, then run the Talaria installer and collector when the site uses them.
 7. `supervisorctl restart php`.
 8. With Talaria on and `container_snapshot` on, write the two release values through the SiteHost environment API. SiteHost restarts the container to apply them.
-9. With source maps, copy the rewritten script onto the theme path.
+9. With source maps uploaded, copy the rewritten script onto the theme path. A failure here warns and leaves the script already on the container.
 10. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
 11. If step 4, 5, 6, 7, or 10 failed, or `test_rollback` is on, restore the application files and the database from the backup in step 3.
 
@@ -454,7 +454,7 @@ The API key is `SITEHOST_API_KEY`, with no IP address on the key. `SITEHOST_CLIE
 
 Turn on `upload_source_maps` for a theme script that Silverstripe combines. The job runs `npm ci` and the source map command on Node 22, uploads with [`newtalaria/source-maps@v1`](https://github.com/newtalaria/source-maps), and copies the rewritten file to `themes/default/javascript` after checkout. `Requirements::combine_files` still builds `assets/_combinedfiles` from that file. The rewritten script is the first file in the combine, and `silverstripe_combine_files` defaults to true.
 
-Source maps are a Talaria feature. They need `TALARIA_RELEASE_KEY` in GitHub and `TALARIA_API_KEY` in GitHub or on the container (see [Talaria (optional)](#talaria-optional)). With no Talaria key, `upload_source_maps` is skipped with the Talaria warning, and the theme keeps the script already on the container. The site needs a `package-lock.json` because the job runs `npm ci`.
+Source maps are a Talaria feature. They need `TALARIA_RELEASE_KEY` in GitHub and `TALARIA_API_KEY` in GitHub or on the container (see [Talaria (optional)](#talaria-optional)). With no Talaria key, `upload_source_maps` is skipped with the Talaria warning, and the theme keeps the script already on the container. The site needs a `package-lock.json` because the job runs `npm ci`. If checkout, install, the build, the upload, or the copy onto the container fails, the job prints one warning and continues. The theme keeps the script already on the container, and that failure does not roll the deploy back.
 
 | Input | Default |
 | --- | --- |
@@ -497,9 +497,9 @@ Actions logs in as a container SSH user. Create one login key, put the public ha
 | --- | --- | --- | --- |
 | Actions login key | SiteHost, on every container SSH user | Organisation secret `SITEHOST_SSH_PRIVATE_KEY` | Actions logs into the container |
 | Server host key | Already on the SiteHost server | Organisation variable `SITEHOST_SSH_HOST_FINGERPRINT` | Actions checks it reached your server |
-| GitHub deploy key | Already on the site repository | Already on the container | The container runs `git fetch` |
+| GitHub deploy key | Already on the site repository, or added from the deploy log | On the container | The container runs `git fetch` |
 
-Create the Actions login key once and attach it to every container. Leave the deploy key already on the container in place.
+Create the Actions login key once and attach it to every container. A container that already has a GitHub deploy key keeps it. A container with no key GitHub will accept gets one ed25519 key the first time the deploy fetches. The log prints the public key and a link to the repository's deploy-key settings, then stops before `composer`. Add that public key with write access off and run the deploy again. Test and production are different SSH users, so each one prints its own key. The private key stays on the container.
 
 ### Create the login key
 
@@ -609,7 +609,7 @@ command -v git composer php rsync gzip mysqldump mysql
 
 `/container/application` should contain `public` and `.git`. `/container/backups/containers` should contain dated snapshot directories. Those paths are the defaults, so leave them out of GitHub unless this container uses different ones. If either listing fails, the SSH user is linked to more than this container. Use the directory under `$HOME/containers` that contains `.git`, and set `SITEHOST_APP_PATH` and `SITEHOST_BACKUP_ROOT` on that environment.
 
-`git remote -v` should show this site's GitHub repository, and `git fetch origin` should finish without a password. That uses the deploy key already on the container. Each `command -v` line should print a path. A restore and a failed-deploy rollback need `rsync`, `gzip`, and `mysql`. `mysqldump` is only used by the disabled local backup.
+`git remote -v` should show this site's GitHub repository, and `git fetch origin` should finish without a password once the container's deploy key is on the repository. The first deploy prints that public key when it is not registered yet. Each `command -v` line should print a path. A restore and a failed-deploy rollback need `rsync`, `gzip`, and `mysql`. `mysqldump` is only used by the disabled local backup.
 
 A restore and a rollback load the database, so confirm the database settings Silverstripe already uses. The first command prints the server, user, and database name. The second checks the password without printing it.
 

@@ -91,6 +91,11 @@ if [[ "$runtime_count" != "1" ]]; then
   echo "expected runtime-health.sh once in the payload, found ${runtime_count}" >&2
   exit 1
 fi
+github_count="$(printf '%s\n' "$deploy_decoded" | grep -c 'SITEHOST_GITHUB_SSH_LOADED=1')"
+if [[ "$github_count" != "1" ]]; then
+  echo "expected github-ssh.sh once in the payload, found ${github_count}" >&2
+  exit 1
+fi
 
 # The container runs the payload on stdin, where BASH_SOURCE is unset.
 printf '%s' "$deploy_encoded" | base64 -d | /bin/bash >"${tmp}/deploy.out" 2>"${tmp}/deploy.err" || true

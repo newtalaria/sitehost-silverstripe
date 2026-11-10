@@ -31,6 +31,8 @@ STUB
   chmod +x "${bin}/${cmd}"
 done
 export PATH="${bin}:${PATH}"
+export HOME="${tmp}/home"
+mkdir -p "$HOME"
 
 app="${tmp}/app"
 mkdir -p "${app}/.git" "${app}/vendor/bin" "${app}/public/assets" "${app}/talaria/sitehost"
