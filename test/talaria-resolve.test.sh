@@ -73,7 +73,7 @@ run_resolve() {
   : > "${tmp}/env"
   set +e
   out="$(
-    env -u TALARIA_API_KEY -u TALARIA_URL -u SITEHOST_API_KEY -u SITEHOST_CLIENT_ID \
+    env -u TALARIA_API_KEY -u TALARIA_BROWSER_API_KEY -u TALARIA_URL -u SITEHOST_API_KEY -u SITEHOST_CLIENT_ID \
       -u SITEHOST_SERVER -u SITEHOST_STACK -u SITEHOST_CONTAINER \
       GITHUB_OUTPUT="${tmp}/output" GITHUB_STEP_SUMMARY="${tmp}/summary" GITHUB_ENV="${tmp}/env" \
       "$@" bash "$resolve" 2>&1
@@ -117,6 +117,14 @@ grep -qF "from the workflow (\`${workflow_key:0:8}…\`)" "${tmp}/summary" || fa
 grep -qxF "::add-mask::${workflow_key}" <<<"$out" || fail "workflow key was not masked" "$out"
 [[ ! -s "$CURL_LOG" ]] || fail "workflow key should not call the SiteHost API"
 assert_no_leak "$workflow_key" sitehost-api-key-value
+browser_key="$(make_key tal_pk_test_nz1_ p)"
+run_resolve TALARIA_API_KEY="$workflow_key" TALARIA_BROWSER_API_KEY=" ${browser_key} " "${sitehost[@]}"
+[[ "$status" -eq 0 ]] || fail "workflow browser key should pass" "$out"
+[[ "$(env_value TALARIA_BROWSER_API_KEY)" == "$browser_key" ]] || fail "workflow browser key was not written to GITHUB_ENV"
+[[ "$(env_value TALARIA_BROWSER_API_KEY_SOURCE)" == "workflow" ]] || fail "browser source should be workflow"
+grep -qx 'browser_source=workflow' "${tmp}/output" || fail "output should say browser_source=workflow"
+grep -qxF "::add-mask::${browser_key}" <<<"$out" || fail "browser key was not masked" "$out"
+assert_no_leak "$browser_key" "$workflow_key"
 
 # 2. No workflow key: the container key is used.
 run_resolve CURL_BODY="$(env_body "$container_key")" TALARIA_URL="" "${sitehost[@]}"
@@ -124,6 +132,9 @@ run_resolve CURL_BODY="$(env_body "$container_key")" TALARIA_URL="" "${sitehost[
 [[ "$(env_value TALARIA_API_KEY)" == "$container_key" ]] || fail "container key was not written to GITHUB_ENV" "$(cat "${tmp}/env")"
 [[ "$(env_value TALARIA_API_KEY_SOURCE)" == "container" ]] || fail "source should be container"
 grep -qx 'source=container' "${tmp}/output" || fail "output should say source=container"
+[[ -z "$(env_value TALARIA_BROWSER_API_KEY)" ]] || fail "a container browser key must not be copied"
+[[ "$(env_value TALARIA_BROWSER_API_KEY_SOURCE)" == "none" ]] || fail "browser source should be none when the workflow did not send one"
+grep -qx 'browser_source=none' "${tmp}/output" || fail "output should say browser_source=none"
 grep -qF "from the SiteHost container (\`${container_key:0:8}…\`)" "${tmp}/summary" || fail "summary should name the container source" "$(cat "${tmp}/summary")"
 grep -qxF "::add-mask::${container_key}" <<<"$out" || fail "container key was not masked" "$out"
 grep -qxF "::add-mask::sitehost-api-key-value" <<<"$out" || fail "SiteHost API key was not masked" "$out"

@@ -20,8 +20,9 @@
 # write, so a missing scope still fails at the step that needs it.
 #
 # Reads TALARIA_API_KEY and TALARIA_URL as found by talaria-resolve.sh (the
-# workflow value, else the SiteHost container), plus TALARIA_RELEASE_KEY and
-# UPLOAD_SOURCE_MAPS.
+# workflow value, else the SiteHost container), plus TALARIA_RELEASE_KEY,
+# TALARIA_BROWSER_API_KEY, and UPLOAD_SOURCE_MAPS. A browser key must be a
+# publishable tal_pk_ key. It does not turn Talaria on by itself.
 # Writes enabled=true|false and reachable=true|false to GITHUB_OUTPUT.
 # Never prints a key.
 set -euo pipefail
@@ -37,6 +38,7 @@ environment="${DEPLOY_ENVIRONMENT:-this environment}"
 
 api_key="$(talaria_collector_trim "${TALARIA_API_KEY:-}")"
 release_key="$(talaria_collector_trim "${TALARIA_RELEASE_KEY:-}")"
+browser_key="$(talaria_collector_trim "${TALARIA_BROWSER_API_KEY:-}")"
 url="$(talaria_collector_trim "${TALARIA_URL:-}")"
 upload_source_maps="${UPLOAD_SOURCE_MAPS:-false}"
 
@@ -65,11 +67,32 @@ mask() {
   done
 }
 
-mask "$api_key" "$release_key"
+mask "$api_key" "$release_key" "$browser_key"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# A browser key is optional. When the workflow sent one, it must be a
+# publishable key before anything is written to the container.
+if [[ -n "$browser_key" ]]; then
+  if [[ "$browser_key" != tal_pk_* ]]; then
+    echo "TALARIA_BROWSER_API_KEY must be a publishable tal_pk_ key. A secret or monitor key cannot be used here." >&2
+    exit 1
+  fi
+  if ! talaria_collector_key_cell "$browser_key" >/dev/null 2>"${tmp}/err"; then
+    sed "s/TALARIA_API_KEY/TALARIA_BROWSER_API_KEY/g" "${tmp}/err" >&2
+    exit 1
+  fi
+fi
 
 if [[ -z "$api_key" && -z "$release_key" && -z "$url" ]]; then
-  echo "::warning title=Talaria skipped::Talaria keys are not set, so the Talaria integration is skipped. The backup and deploy continue."
-  summary "### Talaria" "" "Skipped. No Talaria key is set for \`${environment}\`. Source maps, the release in \`.env\`, job check-ins, and the log collector did not run. Set \`TALARIA_API_KEY\` to turn them on."
+  if [[ -n "$browser_key" ]]; then
+    echo "::warning title=Talaria skipped::TALARIA_API_KEY is not set, so releases, source maps, job check-ins, and the collector are skipped. TALARIA_BROWSER_API_KEY from the workflow is written to the SiteHost container. The backup and deploy continue."
+    summary "### Talaria" "" "Skipped. No \`TALARIA_API_KEY\` is set for \`${environment}\`. \`TALARIA_BROWSER_API_KEY\` from the workflow is written to the SiteHost container."
+  else
+    echo "::warning title=Talaria skipped::Talaria keys are not set, so the Talaria integration is skipped. The backup and deploy continue."
+    summary "### Talaria" "" "Skipped. No Talaria key is set for \`${environment}\`. Source maps, the release in \`.env\`, job check-ins, and the log collector did not run. Set \`TALARIA_API_KEY\` to turn them on."
+  fi
   output enabled=false
   output reachable=false
   exit 0
@@ -162,9 +185,6 @@ probe_key() {
       ;;
   esac
 }
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 labels=(TALARIA_API_KEY)
 keys=("$api_key")

@@ -14,9 +14,11 @@
 # step, so it cannot block the backup or the deploy.
 #
 # Writes TALARIA_API_KEY, TALARIA_URL, and TALARIA_API_KEY_SOURCE to
-# GITHUB_ENV, and source=workflow|container|none to GITHUB_OUTPUT. Every
-# value read from the API is masked before anything else happens. A key is
-# never printed. The summary shows at most its first 8 characters.
+# GITHUB_ENV, and source=workflow|container|none to GITHUB_OUTPUT.
+# TALARIA_BROWSER_API_KEY is recorded only when the workflow supplied it.
+# The container value is left where it is. Every value is masked before
+# anything else happens. A key is never printed. The summary shows at most
+# the first 8 characters of TALARIA_API_KEY.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,9 +90,27 @@ finish() {
   exit 0
 }
 
+# Record the workflow browser key before any exit. An empty value stays empty
+# so a later step cannot mistake a container key for one the workflow sent.
+record_browser_key() {
+  local browser
+  browser="$(trim "${TALARIA_BROWSER_API_KEY:-}")"
+  mask "$browser"
+  if [[ -n "$browser" ]]; then
+    write_env TALARIA_BROWSER_API_KEY "$browser"
+    write_env TALARIA_BROWSER_API_KEY_SOURCE workflow
+    output "browser_source=workflow"
+  else
+    write_env TALARIA_BROWSER_API_KEY ""
+    write_env TALARIA_BROWSER_API_KEY_SOURCE none
+    output "browser_source=none"
+  fi
+}
+
 workflow_key="$(trim "${TALARIA_API_KEY:-}")"
 workflow_url="$(trim "${TALARIA_URL:-}")"
 mask "$workflow_key"
+record_browser_key
 
 if [[ -n "$workflow_key" ]]; then
   finish workflow "$workflow_key" "$workflow_url"

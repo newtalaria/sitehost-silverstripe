@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   api_command:
-    description: backup, set-release, or poll-job. Required for sitehost-api.sh.
+    description: backup, set-release, set-keys, or poll-job. Required for sitehost-api.sh.
     required: false
     default: ""
   api_job_type:
@@ -61,6 +61,9 @@ outputs:
   talaria_key_source:
     description: talaria-resolve.sh result. workflow, container, or none.
     value: ${{ steps.talaria-resolve.outputs.source }}
+  talaria_browser_key_source:
+    description: talaria-resolve.sh result for TALARIA_BROWSER_API_KEY. workflow or none.
+    value: ${{ steps.talaria-resolve.outputs.browser_source }}
   talaria_reachable:
     description: talaria-check.sh result. false when Talaria is off or could not be reached.
     value: ${{ steps.talaria.outputs.reachable }}
@@ -126,7 +129,7 @@ runs:
       run: |
         set -euo pipefail
         case "$API_COMMAND" in
-          backup|set-release)
+          backup|set-release|set-keys)
             bash "$GITHUB_ACTION_PATH/sitehost-api.sh" "$API_COMMAND"
             ;;
           poll-job)
@@ -137,7 +140,7 @@ runs:
             fi
             ;;
           *)
-            echo "api_command must be backup, set-release, or poll-job" >&2
+            echo "api_command must be backup, set-release, set-keys, or poll-job" >&2
             exit 1
             ;;
         esac

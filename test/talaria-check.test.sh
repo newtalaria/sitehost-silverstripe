@@ -69,7 +69,7 @@ run_check() {
   : > "${tmp}/summary"
   set +e
   out="$(
-    env -u TALARIA_API_KEY -u TALARIA_RELEASE_KEY -u TALARIA_URL -u UPLOAD_SOURCE_MAPS \
+    env -u TALARIA_API_KEY -u TALARIA_BROWSER_API_KEY -u TALARIA_RELEASE_KEY -u TALARIA_URL -u UPLOAD_SOURCE_MAPS \
       GITHUB_OUTPUT="${tmp}/output" GITHUB_STEP_SUMMARY="${tmp}/summary" \
       DEPLOY_ENVIRONMENT=test "$@" bash "$check" 2>&1
   )"
@@ -94,6 +94,24 @@ run_check
 grep -qx 'enabled=false' "${tmp}/output" || fail "no keys should write enabled=false"
 grep -q 'Skipped' "${tmp}/summary" || fail "no keys should write a summary line"
 [[ ! -s "$CURL_LOG" ]] || fail "no keys should not call Talaria"
+
+# 1a. A browser key alone stays off, and a secret key is rejected before any request.
+run_check TALARIA_BROWSER_API_KEY="$pk_key"
+[[ "$status" -eq 0 ]] || fail "a publishable browser key alone should pass" "$out"
+[[ "$out" == *"written to the SiteHost container"* ]] || fail "a browser key alone should say it will be written" "$out"
+grep -qx 'enabled=false' "${tmp}/output" || fail "a browser key alone should leave Talaria off"
+[[ ! -s "$CURL_LOG" ]] || fail "a browser key alone should not call Talaria"
+grep -qxF "::add-mask::${pk_key}" <<<"$out" || fail "the browser key should be masked"
+no_secret_leak "$out"
+if [[ "$(printf '%s\n' "$out" | grep -v '^::add-mask::')" == *"$pk_key"* ]]; then
+  fail "printed the browser key" "$out"
+fi
+run_check TALARIA_BROWSER_API_KEY="$api_key"
+[[ "$status" -ne 0 && "$out" == *"TALARIA_BROWSER_API_KEY must be a publishable tal_pk_ key"* ]] || fail "a secret key must not be accepted as the browser key" "$out"
+[[ ! -s "$CURL_LOG" ]] || fail "a secret browser key called Talaria"
+bad_browser="${pk_key:0:$((${#pk_key} - 6))}AAAAAA"
+run_check TALARIA_BROWSER_API_KEY="$bad_browser"
+[[ "$status" -ne 0 && "$out" == *"TALARIA_BROWSER_API_KEY checksum is invalid"* ]] || fail "a bad browser checksum should name the browser key" "$out"
 
 # 1b. Whitespace-only values count as unset.
 run_check TALARIA_API_KEY="  " TALARIA_URL=" "
@@ -130,7 +148,7 @@ run_check TALARIA_API_KEY="$self_key"
 [[ "$status" -ne 0 && "$out" == *"Set TALARIA_URL"* ]] || fail "a self key without TALARIA_URL should fail" "$out"
 
 # 5. Valid keys: one GET /v1/sdk-config per key, Bearer on stdin, not argv.
-run_check TALARIA_API_KEY="$api_key" TALARIA_RELEASE_KEY="$release_key" UPLOAD_SOURCE_MAPS=true CURL_HTTP=200
+run_check TALARIA_API_KEY="$api_key" TALARIA_BROWSER_API_KEY="$pk_key" TALARIA_RELEASE_KEY="$release_key" UPLOAD_SOURCE_MAPS=true CURL_HTTP=200
 [[ "$status" -eq 0 ]] || fail "valid keys should pass" "$out"
 grep -qx 'enabled=true' "${tmp}/output" || fail "valid keys should write enabled=true"
 grep -qx 'reachable=true' "${tmp}/output" || fail "valid keys should write reachable=true"

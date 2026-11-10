@@ -105,8 +105,15 @@ on:
       TALARIA_API_KEY:
         description: >-
           Optional. Turns Talaria on. Secret tal_sk_ key with monitors:write and
-          logs:write. When unset here, the deploy reads TALARIA_API_KEY from the
-          SiteHost container environment. Unset in both means no Talaria.
+          logs:write. When set here, the deploy writes it to the SiteHost
+          container environment. When unset here, the deploy reads it from that
+          environment and leaves it unchanged. Unset in both means no Talaria.
+        required: false
+      TALARIA_BROWSER_API_KEY:
+        description: >-
+          Optional. Publishable tal_pk_ key for the browser SDK. When set here,
+          the deploy writes it to the SiteHost container environment. When unset
+          here, the value already on the container is left unchanged.
         required: false
     outputs:
       snapshot_id:
@@ -222,6 +229,7 @@ jobs:
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
         env:
           TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY || vars.TALARIA_API_KEY }}
+          TALARIA_BROWSER_API_KEY: ${{ secrets.TALARIA_BROWSER_API_KEY || vars.TALARIA_BROWSER_API_KEY }}
           TALARIA_URL: ${{ secrets.TALARIA_URL || vars.TALARIA_URL }}
           SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY || vars.SITEHOST_API_KEY }}
         with:
@@ -548,6 +556,8 @@ jobs:
         env:
           TALARIA_RELEASE: ${{ steps.release.outputs.value }}
           TALARIA_COMMIT_SHA: ${{ steps.release.outputs.commit_sha }}
+          TALARIA_API_KEY: ${{ steps.talaria-key.outputs.talaria_key_source == 'workflow' && env.TALARIA_API_KEY || '' }}
+          TALARIA_BROWSER_API_KEY: ${{ steps.talaria-key.outputs.talaria_browser_key_source == 'workflow' && env.TALARIA_BROWSER_API_KEY || '' }}
         with:
           script: sitehost-api.sh
           api_command: set-release
@@ -560,6 +570,30 @@ jobs:
           api_command: poll-job
           api_job_type: ${{ steps.set-release.outputs.job_type }}
           api_job_id: ${{ steps.set-release.outputs.job_id }}
+          api_timeout: "600"
+
+      - name: Update SiteHost Talaria keys
+        id: set-keys
+        if: >-
+          success() &&
+          (steps.talaria-key.outputs.talaria_key_source == 'workflow' || steps.talaria-key.outputs.talaria_browser_key_source == 'workflow') &&
+          !(inputs.container_snapshot && steps.talaria.outputs.talaria_enabled == 'true')
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        env:
+          TALARIA_API_KEY: ${{ steps.talaria-key.outputs.talaria_key_source == 'workflow' && env.TALARIA_API_KEY || '' }}
+          TALARIA_BROWSER_API_KEY: ${{ steps.talaria-key.outputs.talaria_browser_key_source == 'workflow' && env.TALARIA_BROWSER_API_KEY || '' }}
+        with:
+          script: sitehost-api.sh
+          api_command: set-keys
+
+      - name: Wait for Talaria key update
+        if: steps.set-keys.outcome == 'success'
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: sitehost-api.sh
+          api_command: poll-job
+          api_job_type: ${{ steps.set-keys.outputs.job_type }}
+          api_job_id: ${{ steps.set-keys.outputs.job_id }}
           api_timeout: "600"
 
       - name: Stage rewritten script
@@ -632,16 +666,21 @@ jobs:
         env:
           TALARIA_ENABLED: ${{ steps.talaria.outputs.talaria_enabled }}
           CONTAINER_SNAPSHOT: ${{ inputs.container_snapshot }}
+          KEY_SOURCE: ${{ steps.talaria-key.outputs.talaria_key_source }}
+          BROWSER_SOURCE: ${{ steps.talaria-key.outputs.talaria_browser_key_source }}
         run: |
           if [[ "$TALARIA_ENABLED" != "true" ]]; then
-            echo "Deploy succeeded and php was restarted. Talaria was off, so .env and the container environment were not changed."
-            exit 0
-          fi
-          echo "Deploy succeeded. TALARIA_RELEASE and TALARIA_COMMIT_SHA are in .env, and php was restarted."
-          if [[ "$CONTAINER_SNAPSHOT" == "true" ]]; then
-            echo "The same values were written through the SiteHost environment API, which restarted the container."
+            echo "Deploy succeeded and php was restarted. Talaria was off, so .env was not changed."
           else
-            echo "If the container environment screen also sets either variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
+            echo "Deploy succeeded. TALARIA_RELEASE and TALARIA_COMMIT_SHA are in .env, and php was restarted."
+            if [[ "$CONTAINER_SNAPSHOT" == "true" ]]; then
+              echo "The release values were written through the SiteHost environment API, which restarted the container."
+            else
+              echo "If the container environment screen also sets either release variable, that value overrides .env. Clear them there, then run supervisorctl restart php again."
+            fi
+          fi
+          if [[ "$KEY_SOURCE" == "workflow" || "$BROWSER_SOURCE" == "workflow" ]]; then
+            echo "Talaria keys passed in the workflow were written to the SiteHost container environment. A key found only on the container was left as it is."
           fi
 
       # Retained, disabled (Heath, 2026-11-03). Local copies are no longer taken.
@@ -697,7 +736,7 @@ jobs:
           env_names: SITEHOST_APP_PATH ROLLBACK_RUN_ID RESTORE_ACTION
 
       - name: Release variable after rollback
-        if: failure() && steps.rollback.outcome == 'success' && steps.set-release.outcome == 'success'
+        if: failure() && steps.rollback.outcome == 'success' && (steps.set-release.outcome == 'success' || steps.set-keys.outcome == 'success')
         run: |
           echo "Application files were restored from the pinned SiteHost snapshot."
-          echo "TALARIA_RELEASE was already updated in the container environment and was left unchanged, because changing it restarts the container again."
+          echo "SiteHost environment changes from this run were left in place, because changing them restarts the container again."
