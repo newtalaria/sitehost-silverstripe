@@ -8,11 +8,13 @@
 #   Some settings, others needed Fail and name each missing setting.
 #   Malformed key                Fail. Same grammar and checksum as the SDK.
 #   Key rejected (401 or 403)    Fail. The key is wrong, revoked, or for another cell.
+#   Quota exceeded (402)         ::warning:: and continue. The key was accepted
+#                                and the plan quota is used up.
 #   Other 4xx                    Fail. TALARIA_URL is most likely wrong.
 #   Timeout, 408, 429, or 5xx    ::warning:: and continue with enabled=true and
 #                                reachable=false. The deploy then treats each
 #                                Talaria step as best effort, so a Talaria
-#                                outage does not block a deploy.
+#                                outage or a full quota does not block a deploy.
 #
 # The check is GET /v1/sdk-config with Authorization: Bearer. It accepts any
 # pk or sk key, needs no scope, and writes nothing. It proves the key is live
@@ -175,6 +177,10 @@ probe_key() {
       echo "The key is wrong, revoked, or belongs to another cell. Replace the secret, or remove every Talaria setting to deploy without Talaria." >&2
       return 1
       ;;
+    402)
+      echo "::warning title=Talaria quota::${origin} returned HTTP 402${code:+ (${code})} while checking ${label}. The quota is exceeded, so Talaria steps run as best effort. The deploy continues."
+      return 2
+      ;;
     408|429|5??)
       echo "::warning title=Talaria unavailable::${origin} returned HTTP ${http} while checking ${label}. Talaria steps run as best effort. The deploy continues."
       return 2
@@ -211,7 +217,7 @@ for i in "${!keys[@]}"; do
 done
 
 if [[ "$outage" -eq 1 ]]; then
-  summary "### Talaria" "" "On, best effort. The key check could not reach Talaria, so the keys were not confirmed. A Talaria step that fails in this run is a warning, not a failed deploy."
+  summary "### Talaria" "" "On, best effort. The key check did not confirm Talaria. A Talaria step that fails in this run is a warning, not a failed deploy."
   output enabled=true
   output reachable=false
 else
