@@ -216,7 +216,7 @@ write_rollback_manifest() {
 }
 
 # Write the Talaria release and run the Talaria installer, only when Talaria is on.
-# With TALARIA_REACHABLE=false the key check could not reach Talaria, so an
+# With TALARIA_REACHABLE=false the key check did not confirm Talaria, so an
 # installer failure is a warning and the deploy continues.
 run_talaria_steps() {
   if [[ "${TALARIA_ENABLED:-}" != "true" ]]; then
@@ -229,7 +229,7 @@ run_talaria_steps() {
   write_talaria_release
   if [[ "${TALARIA_REACHABLE:-true}" == "false" ]]; then
     if ! ( install_talaria_runtime ); then
-      echo "::warning title=Talaria install skipped::Talaria was unreachable at the key check and the installer failed. The deploy continues. Deploy again once Talaria is back."
+      echo "::warning title=Talaria install skipped::The Talaria key check did not confirm Talaria and the installer failed. The deploy continues."
     fi
     return 0
   fi

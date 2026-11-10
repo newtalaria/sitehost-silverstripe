@@ -176,6 +176,12 @@ for code in 401 403; do
 done
 run_check TALARIA_API_KEY="$api_key" CURL_HTTP=404
 [[ "$status" -ne 0 && "$out" == *"Check TALARIA_URL"* ]] || fail "HTTP 404 should point at TALARIA_URL" "$out"
+run_check TALARIA_API_KEY="$api_key" CURL_HTTP=402 CURL_BODY='{"error":{"code":"quota_exceeded"}}'
+[[ "$status" -eq 0 ]] || fail "HTTP 402 should not fail the deploy" "$out"
+[[ "$out" == *"::warning title=Talaria quota::"*"quota_exceeded"* ]] || fail "HTTP 402 should warn that the quota is exceeded" "$out"
+[[ "$out" != *"Check TALARIA_URL"* ]] || fail "HTTP 402 should not blame TALARIA_URL" "$out"
+grep -qx 'enabled=true' "${tmp}/output" && grep -qx 'reachable=false' "${tmp}/output" || fail "HTTP 402 should write enabled=true reachable=false"
+grep -q 'best effort' "${tmp}/summary" || fail "HTTP 402 should say best effort in the summary"
 
 # 7. Outages warn and continue with reachable=false.
 for code in 500 502 503 429; do
