@@ -107,6 +107,18 @@ check(rsteps.index("Find newest snapshot") < rsteps.index("Start container backu
 action = yaml.safe_load((root / "actions" / "ssh" / "action.yml").read_text())
 check("talaria_enabled" in action["outputs"] and "talaria_reachable" in action["outputs"], "action must expose the Talaria outputs")
 check("talaria_key_source" in action["outputs"], "action must expose the Talaria key source")
+check("talaria_browser_key_source" in action["outputs"], "action must expose the browser key source")
+check("TALARIA_BROWSER_API_KEY" in deploy[True]["workflow_call"]["secrets"], "the workflow must accept TALARIA_BROWSER_API_KEY")
+release_env = by_name["Set TALARIA_RELEASE"]["env"]
+check("talaria_key_source == 'workflow'" in release_env["TALARIA_API_KEY"], "the release update must send a workflow API key")
+check("talaria_browser_key_source == 'workflow'" in release_env["TALARIA_BROWSER_API_KEY"], "the release update must send a workflow browser key")
+check(by_name["Update SiteHost Talaria keys"]["with"]["api_command"] == "set-keys", "workflow keys need their own update when the release update does not run")
+key_if = str(by_name["Update SiteHost Talaria keys"]["if"])
+check("talaria_key_source == 'workflow'" in key_if and "talaria_browser_key_source == 'workflow'" in key_if, "the key update must run when a workflow key is set")
+check("container_snapshot && steps.talaria.outputs.talaria_enabled == 'true'" in key_if, "the key update must not repeat the release update")
+check(by_name["Wait for Talaria key update"]["if"] == "steps.set-keys.outcome == 'success'", "the key update must be waited on")
+check("TALARIA_BROWSER_API_KEY" not in by_name["Check Talaria keys"].get("env", {}), "the key check must read the resolved browser key")
+check("TALARIA_BROWSER_API_KEY" not in by_name["Deploy commit"]["with"]["env_names"].split(), "the browser key must not be sent over SSH")
 
 if errors:
     for e in errors:

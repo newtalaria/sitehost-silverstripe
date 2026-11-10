@@ -156,8 +156,14 @@ if ! grep -q '/cloud/stack/backup.json' "$CURL_LOG"; then
 fi
 
 : > "$CURL_LOG"
-TALARIA_RELEASE="main@0123456" TALARIA_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
-  bash "$api" set-release >/dev/null
+unset TALARIA_API_KEY TALARIA_BROWSER_API_KEY || true
+release_out="$(TALARIA_RELEASE="main@0123456" TALARIA_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
+  bash "$api" set-release 2>&1)"
+if [[ "$release_out" != *"TALARIA_RELEASE, TALARIA_COMMIT_SHA"* ]]; then
+  echo "set-release did not name the release variables" >&2
+  printf '%s\n' "$release_out" >&2
+  exit 1
+fi
 if ! grep -qx 'service=cce6c3ce72078711' "$CURL_LOG" || ! grep -qx 'project=cce6c3ce72078711' "$CURL_LOG"; then
   echo "set-release did not send the stack id as the project and the service" >&2
   cat "$CURL_LOG" >&2
@@ -165,6 +171,74 @@ if ! grep -qx 'service=cce6c3ce72078711' "$CURL_LOG" || ! grep -qx 'project=cce6
 fi
 if grep -qx 'service=example.nz' "$CURL_LOG"; then
   echo "set-release sent the hostname as the service" >&2
+  exit 1
+fi
+if grep -q 'TALARIA_API_KEY\|TALARIA_BROWSER_API_KEY' "$CURL_LOG"; then
+  echo "set-release sent a Talaria key that was not set" >&2
+  exit 1
+fi
+
+: > "$CURL_LOG"
+api_key_value="tal_sk_test_nz1_workflow_key"
+browser_key_value="tal_pk_test_nz1_workflow_key"
+key_out="$(TALARIA_RELEASE="main@0123456" TALARIA_COMMIT_SHA="0123456789abcdef0123456789abcdef01234567" \
+  TALARIA_API_KEY="$api_key_value" TALARIA_BROWSER_API_KEY="$browser_key_value" \
+  bash "$api" set-release 2>&1)"
+if [[ "$key_out" == *"$api_key_value"* || "$key_out" == *"$browser_key_value"* ]]; then
+  echo "set-release printed a Talaria key" >&2
+  exit 1
+fi
+if ! grep -Fqx 'variables[2][name]=TALARIA_API_KEY' "$CURL_LOG" || ! grep -Fqx "variables[2][content]=${api_key_value}" "$CURL_LOG"; then
+  echo "set-release did not send the workflow API key" >&2
+  exit 1
+fi
+if ! grep -Fqx 'variables[3][name]=TALARIA_BROWSER_API_KEY' "$CURL_LOG" || ! grep -Fqx "variables[3][content]=${browser_key_value}" "$CURL_LOG"; then
+  echo "set-release did not send the workflow browser key" >&2
+  exit 1
+fi
+
+: > "$CURL_LOG"
+browser_only="$(env -u TALARIA_API_KEY -u TALARIA_RELEASE -u TALARIA_COMMIT_SHA TALARIA_BROWSER_API_KEY="$browser_key_value" bash "$api" set-keys 2>&1)"
+if [[ "$browser_only" == *"$browser_key_value"* ]]; then
+  echo "set-keys printed the browser key" >&2
+  exit 1
+fi
+if ! grep -Fqx 'variables[0][name]=TALARIA_BROWSER_API_KEY' "$CURL_LOG"; then
+  echo "set-keys did not send the browser key" >&2
+  exit 1
+fi
+if grep -Fqx 'variables[0][name]=TALARIA_API_KEY' "$CURL_LOG" || grep -q 'TALARIA_RELEASE' "$CURL_LOG"; then
+  echo "set-keys sent a variable that was not set" >&2
+  exit 1
+fi
+
+: > "$CURL_LOG"
+set +e
+no_keys="$(env -u TALARIA_API_KEY -u TALARIA_BROWSER_API_KEY bash "$api" set-keys 2>&1)"
+no_keys_status=$?
+set -e
+if [[ "$no_keys_status" -eq 0 || "$no_keys" != *"No SiteHost environment variables"* ]]; then
+  echo "set-keys with no keys should fail" >&2
+  printf '%s\n' "$no_keys" >&2
+  exit 1
+fi
+if [[ -s "$CURL_LOG" ]]; then
+  echo "set-keys with no keys called the API" >&2
+  exit 1
+fi
+
+: > "$CURL_LOG"
+set +e
+newline_key="$(TALARIA_API_KEY=$'line\nbreak' bash "$api" set-keys 2>&1)"
+newline_status=$?
+set -e
+if [[ "$newline_status" -eq 0 || "$newline_key" != *"newline"* ]]; then
+  echo "a key with a newline should be rejected" >&2
+  printf '%s\n' "$newline_key" >&2
+  exit 1
+fi
+if [[ -s "$CURL_LOG" ]]; then
+  echo "a newline key called the API" >&2
   exit 1
 fi
 

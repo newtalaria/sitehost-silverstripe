@@ -9,7 +9,7 @@ API_BASE="${SITEHOST_API_BASE:-https://api.sitehost.nz/1.5}"
 
 # Print how to run this script, then exit.
 usage() {
-  echo "Usage: sitehost-api.sh backup|set-release|get-env OUTFILE|poll-job TYPE ID [TIMEOUT_SECONDS]" >&2
+  echo "Usage: sitehost-api.sh backup|set-release|set-keys|get-env OUTFILE|poll-job TYPE ID [TIMEOUT_SECONDS]" >&2
   exit 1
 }
 
@@ -173,12 +173,66 @@ cmd_backup() {
   job_from_body "$body"
 }
 
-# Update TALARIA_RELEASE and TALARIA_COMMIT_SHA. SiteHost restarts the container to apply them.
-cmd_set_release() {
+# Variables for the next environment update. Empty values are not sent, so a
+# missing workflow key cannot clear the one already on the container.
+form_args=()
+var_names=()
+var_index=0
+
+# Queue one named variable. The value is never printed.
+append_variable() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+  if [[ "$value" == *$'\n'* ]]; then
+    echo "${name} contains a newline" >&2
+    exit 1
+  fi
+  form_args+=(--form "variables[${var_index}][name]=${name}")
+  form_args+=(--form "variables[${var_index}][content]=${value}")
+  var_names+=("$name")
+  var_index=$((var_index + 1))
+}
+
+# POST the queued variables. SiteHost merges by name and restarts the container.
+post_environment_update() {
   require_env SITEHOST_API_KEY
   require_env SITEHOST_CLIENT_ID
   require_env SITEHOST_SERVER
   require_env SITEHOST_CONTAINER
+  if [[ "$var_index" -eq 0 ]]; then
+    echo "No SiteHost environment variables to update" >&2
+    exit 1
+  fi
+  if [[ ! "$SITEHOST_CLIENT_ID" =~ ^[0-9]{1,12}$ ]]; then
+    echo "SITEHOST_CLIENT_ID must be the numeric client id." >&2
+    exit 1
+  fi
+  assert_api_name "SITEHOST_SERVER" "$SITEHOST_SERVER"
+  assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
+  resolve_stack_name
+
+  local list="" name body
+  for name in "${var_names[@]}"; do
+    list="${list:+${list}, }${name}"
+  done
+  echo "Updating SiteHost environment for container ${SITEHOST_STACK}: ${list}"
+
+  body="$(sitehost_request POST "/cloud/stack/environment/update.json" \
+    --form "apikey=${SITEHOST_API_KEY}" \
+    --form "client_id=${SITEHOST_CLIENT_ID}" \
+    --form "server=${SITEHOST_SERVER}" \
+    --form "project=${SITEHOST_STACK}" \
+    --form "service=${SITEHOST_STACK}" \
+    "${form_args[@]}")"
+  job_from_body "$body"
+}
+
+# Update TALARIA_RELEASE and TALARIA_COMMIT_SHA, plus any Talaria key the
+# workflow supplied. SiteHost restarts the container to apply them.
+cmd_set_release() {
   require_env TALARIA_RELEASE
   require_env TALARIA_COMMIT_SHA
 
@@ -190,21 +244,25 @@ cmd_set_release() {
     echo "TALARIA_COMMIT_SHA must be a 40 character git commit" >&2
     exit 1
   fi
-  assert_api_name "SITEHOST_CONTAINER" "$SITEHOST_CONTAINER"
-  resolve_stack_name
+  form_args=()
+  var_names=()
+  var_index=0
+  append_variable TALARIA_RELEASE "$TALARIA_RELEASE"
+  append_variable TALARIA_COMMIT_SHA "$TALARIA_COMMIT_SHA"
+  append_variable TALARIA_API_KEY "${TALARIA_API_KEY:-}"
+  append_variable TALARIA_BROWSER_API_KEY "${TALARIA_BROWSER_API_KEY:-}"
+  post_environment_update
+}
 
-  local body
-  body="$(sitehost_request POST "/cloud/stack/environment/update.json" \
-    --form "apikey=${SITEHOST_API_KEY}" \
-    --form "client_id=${SITEHOST_CLIENT_ID}" \
-    --form "server=${SITEHOST_SERVER}" \
-    --form "project=${SITEHOST_STACK}" \
-    --form "service=${SITEHOST_STACK}" \
-    --form "variables[0][name]=TALARIA_RELEASE" \
-    --form "variables[0][content]=${TALARIA_RELEASE}" \
-    --form "variables[1][name]=TALARIA_COMMIT_SHA" \
-    --form "variables[1][content]=${TALARIA_COMMIT_SHA}")"
-  job_from_body "$body"
+# Write the Talaria keys the workflow supplied. A key read from the container
+# is not passed in, so this cannot write it back.
+cmd_set_keys() {
+  form_args=()
+  var_names=()
+  var_index=0
+  append_variable TALARIA_API_KEY "${TALARIA_API_KEY:-}"
+  append_variable TALARIA_BROWSER_API_KEY "${TALARIA_BROWSER_API_KEY:-}"
+  post_environment_update
 }
 
 # Write the container environment to OUTFILE as a JSON array of
@@ -300,7 +358,7 @@ cmd_poll_job() {
   done
 }
 
-# Run backup, set-release, get-env, or poll-job from the first argument.
+# Run backup, set-release, set-keys, get-env, or poll-job from the first argument.
 main() {
   require_commands
   local command="${1:-}"
@@ -315,6 +373,10 @@ main() {
     set-release)
       [[ $# -eq 0 ]] || usage
       cmd_set_release
+      ;;
+    set-keys)
+      [[ $# -eq 0 ]] || usage
+      cmd_set_keys
       ;;
     get-env)
       [[ $# -eq 1 ]] || usage

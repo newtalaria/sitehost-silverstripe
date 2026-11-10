@@ -23,7 +23,8 @@ Shared by every site in the GitHub organisation. On each secret, set repository 
 | --- | --- | --- |
 | `SITEHOST_SSH_PRIVATE_KEY` | Every deploy | The Actions login private key, including the `BEGIN` and `END` lines. |
 | `SITEHOST_API_KEY` | Every deploy, backup, and restore | The account API key from the SiteHost control panel. Leave the key's IP allowlist empty. A key with any address listed rejects a GitHub-hosted runner, because that address changes on every job. |
-| `TALARIA_API_KEY` | Optional. Not needed when it is set on the SiteHost container | See [Talaria (optional)](#talaria-optional). |
+| `TALARIA_API_KEY` | Optional. Not needed when it is set on the SiteHost container | See [Talaria (optional)](#talaria-optional). When this secret is set, the deploy writes it to the SiteHost container. |
+| `TALARIA_BROWSER_API_KEY` | Optional. The browser SDK key | A publishable `tal_pk_` key. When this secret is set, the deploy writes it to the SiteHost container. |
 | `TALARIA_RELEASE_KEY` | Optional. Source maps and the release upload only | See [Talaria (optional)](#talaria-optional). |
 | `TALARIA_URL` | Optional | See [Talaria (optional)](#talaria-optional). |
 
@@ -170,15 +171,17 @@ Run a deploy from the Actions tab with **Run workflow**. Pick the environment. T
 
 The deploy, backup, restore, and status workflows all run without Talaria. Talaria adds the release name in `.env`, source maps, job check-ins, and the container log collector.
 
-To use Talaria, set `TALARIA_API_KEY` and `TALARIA_BROWSER_API_KEY` in the SiteHost container's environment variables in the control panel. The site reads both from there, and the deploy reads `TALARIA_API_KEY` from there too, so GitHub does not need a copy. Add `TALARIA_RELEASE_KEY` as a GitHub secret only when `upload_source_maps` is on. Without any Talaria key, leave them all out and the deploy shows one warning.
+To use Talaria, set `TALARIA_API_KEY` and `TALARIA_BROWSER_API_KEY` in the SiteHost container's environment variables in the control panel, or pass either key in the workflow. The site reads both from the container. A key passed in the workflow is written to the container environment after the deploy succeeds. A key found only on the container is left as it is. Add `TALARIA_RELEASE_KEY` as a GitHub secret only when `upload_source_maps` is on. Without any Talaria key, leave them all out and the deploy shows one warning.
 
 ### Where the deploy finds `TALARIA_API_KEY`
 
 The first deploy step looks for the key in this order, before the key check and before any backup or file change:
 
-1. `TALARIA_API_KEY` passed to the workflow, as a secret or a variable. This wins when it is set.
-2. `TALARIA_API_KEY` in the SiteHost container environment. The deploy reads it with the SiteHost API, `GET /cloud/stack/environment/get.json`, using `SITEHOST_API_KEY`, `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, and `SITEHOST_STACK` (project and service). This sees the variables set in the control panel. It does not see variables only in the application's `.env` file.
+1. `TALARIA_API_KEY` passed to the workflow, as a secret or a variable. This wins when it is set, and the deploy writes it to the SiteHost container environment.
+2. `TALARIA_API_KEY` in the SiteHost container environment. The deploy reads it with the SiteHost API, `GET /cloud/stack/environment/get.json`, using `SITEHOST_API_KEY`, `SITEHOST_CLIENT_ID`, `SITEHOST_SERVER`, and `SITEHOST_STACK` (project and service). This sees the variables set in the control panel. It does not see variables only in the application's `.env` file. A key found here is not written back.
 3. Neither. Talaria is skipped with one warning.
+
+`TALARIA_BROWSER_API_KEY` is read only from the workflow. When it is set, the deploy writes it to the SiteHost container. When it is not set, the browser key already on the container stays.
 
 `TALARIA_URL` follows the same order, but a container `TALARIA_URL` is used only when the key also came from the container. The job summary says which source was used (`workflow` or `SiteHost container`) and shows at most the first 8 characters of the key. A value read from the container is masked with `::add-mask::` before anything else runs.
 
@@ -190,7 +193,8 @@ If the SiteHost API lookup fails, for example an HTTP error, an API key without 
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `TALARIA_API_KEY` | Secret, or the SiteHost container environment | Turns Talaria on. Optional in GitHub when it is set on the container. A secret `tal_sk_<env>_<cell>_…` key with `monitors:write` and `logs:write`. The ingest host comes from the key's cell: `https://ingest-<cell>.newtalaria.com`, and the collector exports to that host plus `/otlp`. When the site contains `talaria/sitehost/monitors.json`, or `TALARIA_INSTALL_PROBE` is `true`, the deploy runs `vendor/bin/talaria-sitehost install` (talaria/silverstripe 3.0.1 or newer). That registers each job once, rewrites one crontab block, and starts the log collector. Cron lines check in with a `tal_mon_` monitor token, not this key. |
+| `TALARIA_API_KEY` | Secret, or the SiteHost container environment | Turns Talaria on. Optional in GitHub when it is set on the container. A secret `tal_sk_<env>_<cell>_…` key with `monitors:write` and `logs:write`. When the workflow supplies it, the deploy writes that value to the SiteHost container environment. The ingest host comes from the key's cell: `https://ingest-<cell>.newtalaria.com`, and the collector exports to that host plus `/otlp`. When the site contains `talaria/sitehost/monitors.json`, or `TALARIA_INSTALL_PROBE` is `true`, the deploy runs `vendor/bin/talaria-sitehost install` (talaria/silverstripe 3.0.1 or newer). That registers each job once, rewrites one crontab block, and starts the log collector. Cron lines check in with a `tal_mon_` monitor token, not this key. |
+| `TALARIA_BROWSER_API_KEY` | Secret | Optional publishable `tal_pk_` key for the browser SDK. When the workflow supplies it, the deploy writes it to the SiteHost container environment. It does not turn the server integration on by itself. |
 | `TALARIA_RELEASE_KEY` | Secret | Needed when `upload_source_maps` is on. A `tal_sk_` key with `releases:write`. One key can serve every site. |
 | `TALARIA_URL` | Secret or variable | Ingest origin override for self-host or a custom domain. Leave it unset on Talaria Cloud. A `self` cell key needs it. It applies to the key check, the source map upload, and the collector. |
 | `TALARIA_INSTALL_PROBE` | Variable | `true` runs the Talaria installer even without `monitors.json`. |
@@ -203,15 +207,15 @@ The key check runs right after the lookup, on the key it found, before any backu
 
 | Settings | Result |
 | --- | --- |
-| None set | One warning: `Talaria keys are not set, so the Talaria integration is skipped. The backup and deploy continue.` The job summary says Talaria was skipped. The release in `.env`, source maps, check-ins, the collector, and the SiteHost environment update all skip. The backup and deploy run. |
+| None set | One warning: `Talaria keys are not set, so the Talaria integration is skipped. The backup and deploy continue.` The job summary says Talaria was skipped. The release in `.env`, source maps, check-ins, the collector, and the SiteHost release update all skip. The backup and deploy run. A workflow `TALARIA_BROWSER_API_KEY` on its own still skips those steps and is written to the container. |
 | Some set, some missing | Fails and names the missing ones. `TALARIA_URL` or `TALARIA_RELEASE_KEY` without `TALARIA_API_KEY` is partial. So is `upload_source_maps` without `TALARIA_RELEASE_KEY`. |
-| Malformed key | Fails. The key must be a `tal_sk_` key with a valid cell and checksum, the same check the SDK makes. |
+| Malformed key | Fails. `TALARIA_API_KEY` and `TALARIA_RELEASE_KEY` must be `tal_sk_` keys with a valid cell and checksum, the same check the SDK makes. `TALARIA_BROWSER_API_KEY`, when set, must be a `tal_pk_` key with that same checksum. |
 | Key rejected | Fails. The check calls `GET /v1/sdk-config` on the ingest host with each key. HTTP 401 or 403 means the key is wrong, revoked, or for another cell. Any other 4xx points at `TALARIA_URL`. |
 | Talaria unreachable | Warns and continues. A timeout, connection error, 408, 429, or 5xx is treated as an outage, not a wrong key. A failed Talaria installer is then a warning, and the deploy continues. |
 
 Auth errors fail closed, because a wrong key is a configuration mistake that a rerun will not fix. Outages fail open, so Talaria downtime never blocks a deploy. `GET /v1/sdk-config` accepts any live key and writes nothing, so the check cannot confirm `releases:write` or `monitors:write`. A missing scope still fails at the step that needs it.
 
-Keys are masked in the log with `::add-mask::` and sent to curl on stdin, never on its command line. Without Talaria, no Talaria key reaches the container.
+Keys are masked in the log with `::add-mask::` and sent to curl on stdin, never on its command line. The SSH deploy receives `TALARIA_API_KEY` only when Talaria is on. A `TALARIA_API_KEY` or `TALARIA_BROWSER_API_KEY` passed in the workflow is written with the SiteHost environment API after the deploy succeeds. When the release update also runs, the keys go in that same request, so the container restarts once. Otherwise the keys are their own update, and the job waits for that restart before the smoke check. A key found only on the container is not written back.
 
 ### Caller with Talaria
 
@@ -228,8 +232,10 @@ jobs:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
-      # Optional. Leave these out when the container sets TALARIA_API_KEY.
+      # Optional. A value set here is written to the SiteHost container.
+      # Leave TALARIA_API_KEY out when the container already has it.
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
+      TALARIA_BROWSER_API_KEY: ${{ secrets.TALARIA_BROWSER_API_KEY }}
       TALARIA_URL: ${{ secrets.TALARIA_URL }}
 ```
 
@@ -419,7 +425,7 @@ Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `S
 5. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
 6. With Talaria on, write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`, then run the Talaria installer and collector when the site uses them.
 7. `supervisorctl restart php`.
-8. With Talaria on and `container_snapshot` on, write the two release values through the SiteHost environment API. SiteHost restarts the container to apply them.
+8. With Talaria on and `container_snapshot` on, write the two release values through the SiteHost environment API. A `TALARIA_API_KEY` or `TALARIA_BROWSER_API_KEY` passed in the workflow is written in that same request. SiteHost restarts the container to apply them. When the release update does not run, those workflow keys are still written, and the job waits for that restart.
 9. With source maps uploaded, copy the rewritten script onto the theme path. A failure here warns and leaves the script already on the container.
 10. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
 11. If step 4, 5, 6, 7, or 10 failed, or `test_rollback` is on, restore the application files and the database from the backup in step 3.
@@ -486,6 +492,7 @@ jobs:
       SITEHOST_SSH_PRIVATE_KEY: ${{ secrets.SITEHOST_SSH_PRIVATE_KEY }}
       SITEHOST_API_KEY: ${{ secrets.SITEHOST_API_KEY }}
       TALARIA_API_KEY: ${{ secrets.TALARIA_API_KEY }}
+      TALARIA_BROWSER_API_KEY: ${{ secrets.TALARIA_BROWSER_API_KEY }}
       TALARIA_RELEASE_KEY: ${{ secrets.TALARIA_RELEASE_KEY }}
 ```
 
