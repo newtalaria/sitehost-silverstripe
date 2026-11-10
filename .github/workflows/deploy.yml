@@ -250,30 +250,38 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout code
+        id: source-map-checkout
+        continue-on-error: true
         if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        id: source-map-node
+        continue-on-error: true
+        if: steps.source-map-checkout.outcome == 'success'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
 
       - name: Install dependencies
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        id: source-map-npm
+        continue-on-error: true
+        if: steps.source-map-node.outcome == 'success'
         run: npm ci
 
       - name: Build the source map
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        id: source-map-build
+        continue-on-error: true
+        if: steps.source-map-npm.outcome == 'success'
         env:
           SOURCE_MAP_COMMAND: ${{ inputs.source_map_command }}
         run: bash --noprofile --norc -c "$SOURCE_MAP_COMMAND"
 
       - name: Upload source maps
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
-        # Best effort only when the key check could not reach Talaria.
-        continue-on-error: ${{ steps.talaria.outputs.talaria_reachable == 'false' }}
+        id: source-map-upload
+        continue-on-error: true
+        if: steps.source-map-build.outcome == 'success'
         uses: newtalaria/source-maps@v1
         with:
           path: ${{ inputs.source_map_directory }}
@@ -556,7 +564,8 @@ jobs:
 
       - name: Stage rewritten script
         id: rewritten
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        continue-on-error: true
+        if: success() && steps.source-map-upload.outcome == 'success'
         env:
           REWRITTEN_SCRIPT: ${{ inputs.rewritten_script }}
         run: |
@@ -575,7 +584,9 @@ jobs:
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
       - name: Install rewritten script
-        if: success() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true'
+        id: source-map-copy
+        continue-on-error: true
+        if: steps.rewritten.outcome == 'success'
         uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ env.SITEHOST_SSH_HOST }}
@@ -587,6 +598,10 @@ jobs:
           target: ${{ env.SITEHOST_APP_PATH }}/${{ inputs.remote_script_dir }}
           strip_components: 1
           overwrite: true
+
+      - name: Warn when source maps fail
+        if: ${{ !cancelled() && inputs.upload_source_maps && steps.talaria.outputs.talaria_enabled == 'true' && (steps.source-map-checkout.outcome == 'failure' || steps.source-map-node.outcome == 'failure' || steps.source-map-npm.outcome == 'failure' || steps.source-map-build.outcome == 'failure' || steps.source-map-upload.outcome == 'failure' || steps.rewritten.outcome == 'failure' || steps.source-map-copy.outcome == 'failure') }}
+        run: echo "::warning title=Source maps::Source maps were not published. The deploy continues, and the theme keeps the script already on the container."
 
       - name: Smoke check
         id: smoke

@@ -22,6 +22,10 @@ if [[ -z "${SITEHOST_RUNTIME_LOADED:-}" ]]; then
   # shellcheck disable=SC1091
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-health.sh"
 fi
+if [[ -z "${SITEHOST_GITHUB_SSH_LOADED:-}" ]]; then
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github-ssh.sh"
+fi
 
 : "${SITEHOST_APP_PATH:?SITEHOST_APP_PATH is required}"
 : "${GIT_REMOTE:?GIT_REMOTE is required}"
@@ -278,9 +282,25 @@ if [[ "${BACKUP_DATABASE:-}" == "true" || "${BACKUP_ASSETS:-}" == "true" ]]; the
 fi
 
 cd "$SITEHOST_APP_PATH"
+prepare_github_ssh
 gitc remote set-url origin "$GIT_REMOTE"
 echo "Fetching ${DEPLOY_SHA}"
-gitc fetch origin "$DEPLOY_SHA"
+fetch_log="$(mktemp)"
+if ! gitc fetch origin "$DEPLOY_SHA" >"$fetch_log" 2>&1; then
+  cat "$fetch_log" >&2
+  if github_fetch_failed_host_key "$fetch_log"; then
+    rm -f "$fetch_log"
+    explain_github_host_key
+  fi
+  if github_fetch_failed_publickey "$fetch_log"; then
+    rm -f "$fetch_log"
+    explain_github_deploy_key
+  fi
+  rm -f "$fetch_log"
+  exit 1
+fi
+cat "$fetch_log"
+rm -f "$fetch_log"
 gitc checkout --force --detach "$DEPLOY_SHA"
 delete_other_branches
 build_site

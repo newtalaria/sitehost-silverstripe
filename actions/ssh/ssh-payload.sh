@@ -40,6 +40,9 @@ fi
 if [[ -f "${src_dir}/runtime-health.sh" && "$base" != "runtime-health.sh" ]]; then
   parts+=("${src_dir}/runtime-health.sh")
 fi
+if [[ -f "${src_dir}/github-ssh.sh" && "$base" != "github-ssh.sh" ]]; then
+  parts+=("${src_dir}/github-ssh.sh")
+fi
 if [[ "${#parts[@]}" -gt 0 ]]; then
   cat "${parts[@]}" "$src" > "$body"
 else

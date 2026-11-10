@@ -66,18 +66,28 @@ for name in ("TALARIA_API_KEY", "TALARIA_URL"):
 check(by_name["Check Talaria keys"]["with"]["script"] == "talaria-check.sh", "Check Talaria keys must run talaria-check.sh")
 talaria_steps = [
     "Checkout code",
+    "Set TALARIA_RELEASE",
+    "Wait for container restart",
+]
+for name in talaria_steps:
+    check("steps.talaria.outputs.talaria_enabled == 'true'" in str(by_name[name].get("if", "")), f"{name} must only run when Talaria is on")
+# Later source map steps run only after Checkout, which already requires Talaria.
+check(by_name["Setup Node"]["if"] == "steps.source-map-checkout.outcome == 'success'", "Node setup must follow a successful checkout")
+check("steps.source-map-upload.outcome == 'success'" in str(by_name["Stage rewritten script"].get("if", "")), "the rewritten script is staged only after the upload")
+source_map_steps = [
+    "Checkout code",
     "Setup Node",
     "Install dependencies",
     "Build the source map",
     "Upload source maps",
-    "Set TALARIA_RELEASE",
-    "Wait for container restart",
     "Stage rewritten script",
     "Install rewritten script",
 ]
-for name in talaria_steps:
-    check("steps.talaria.outputs.talaria_enabled == 'true'" in str(by_name[name].get("if", "")), f"{name} must only run when Talaria is on")
-check("talaria_reachable == 'false'" in str(by_name["Upload source maps"].get("continue-on-error", "")), "source map upload should be best effort in an outage")
+for name in source_map_steps:
+    check(by_name[name].get("continue-on-error") is True, f"{name} must continue when source maps fail")
+check("Warn when source maps fail" in by_name, "a source map failure must print a warning")
+check(by_name["Upload source maps"]["if"] == "steps.source-map-build.outcome == 'success'", "upload must wait for a built source map")
+check(by_name["Install rewritten script"]["if"] == "steps.rewritten.outcome == 'success'", "the rewritten script is copied only after it is staged")
 check("steps.talaria.outputs.talaria_enabled == 'true'" in deploy_env["TALARIA_API_KEY"], "TALARIA_API_KEY must only reach the container when Talaria is on")
 check("TALARIA_ENABLED" in by_name["Deploy commit"]["with"]["env_names"].split(), "Deploy commit must export TALARIA_ENABLED")
 check("TALARIA_REACHABLE" in by_name["Deploy commit"]["with"]["env_names"].split(), "Deploy commit must export TALARIA_REACHABLE")
