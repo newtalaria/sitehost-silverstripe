@@ -135,12 +135,7 @@ build_site() {
 
 # Reload PHP so the new code and .env are the process serving the site.
 restart_php() {
-  if ! command -v supervisorctl >/dev/null 2>&1; then
-    echo "supervisorctl is not available, so php was not restarted." >&2
-    exit 1
-  fi
-  echo "Restarting php"
-  supervisorctl restart php
+  restart_php_supervisor
 }
 
 # Write a consistent database dump before any files change, so a failed deploy can restore it.
@@ -305,6 +300,7 @@ gitc checkout --force --detach "$DEPLOY_SHA"
 delete_other_branches
 build_site
 run_talaria_steps
+reset_silverstripe_web_cache
 restart_php
 echo "Deployed ${DEPLOY_SHA} at ${SITEHOST_APP_PATH}"
 gitc rev-parse HEAD

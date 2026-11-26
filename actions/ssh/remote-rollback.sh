@@ -63,6 +63,13 @@ if [[ "$SNAPSHOT_PATH" == "$SITEHOST_APP_PATH" ]]; then
   exit 1
 fi
 
+# A new SSH session can miss the automount until something lists it. Pinning
+# already waits. Rollback is a separate session and has to wait too.
+if ! wait_for_backup_root; then
+  echo "Backup root did not mount: ${SITEHOST_BACKUP_ROOT}" >&2
+  exit 1
+fi
+
 if [[ -L "$SNAPSHOT_PATH" ]]; then
   echo "Refusing to roll back from a symlinked snapshot" >&2
   exit 1
@@ -161,3 +168,8 @@ if [[ "${RESTORE_SNAPSHOT_DATABASE:-}" == "true" ]]; then
 else
   echo "Left the snapshot database in place. RESTORE_SNAPSHOT_DATABASE is not true."
 fi
+
+# The restored files must be what the next request compiles. The web process
+# does not share this session's /tmp.
+reset_silverstripe_web_cache
+restart_php_supervisor

@@ -56,6 +56,60 @@ require_database_env() {
   done
 }
 
+# Wait for the backup root to appear. SiteHost links it to an automounted
+# directory that is only mounted once something opens it, so the first check
+# in a fresh SSH session can miss it. Listing it starts the mount.
+wait_for_backup_root() {
+  local wait_seconds="${BACKUP_ROOT_WAIT_SECONDS:-30}"
+  local poll_seconds="${BACKUP_ROOT_POLL_SECONDS:-2}"
+  if [[ ! "$wait_seconds" =~ ^[0-9]+$ || ! "$poll_seconds" =~ ^[0-9]+$ || "$poll_seconds" -lt 1 ]]; then
+    echo "BACKUP_ROOT_WAIT_SECONDS and BACKUP_ROOT_POLL_SECONDS must be whole numbers" >&2
+    exit 1
+  fi
+  local start=$SECONDS
+  while true; do
+    ls -A "${SITEHOST_BACKUP_ROOT%/}/" >/dev/null 2>&1 || true
+    if [[ -d "$SITEHOST_BACKUP_ROOT" ]]; then
+      return 0
+    fi
+    if (( SECONDS - start >= wait_seconds )); then
+      return 1
+    fi
+    echo "Waiting for the backup root to mount: ${SITEHOST_BACKUP_ROOT}" >&2
+    sleep "$poll_seconds"
+  done
+}
+
+# Silverstripe stores compiled config in a per-user directory under the system
+# temp dir. The SSH session and php-fpm are different containers and do not
+# share /tmp, so `sake dev/build flush=all` never clears the cache the site
+# serves. Silverstripe prefers <app>/silverstripe-cache when that directory
+# exists, and both containers see the application path. Recreate it empty so
+# the next web request compiles the files now on disk.
+reset_silverstripe_web_cache() {
+  local cache="${SITEHOST_APP_PATH}/silverstripe-cache"
+  local old_umask
+  assert_absolute_path "SITEHOST_APP_PATH" "$SITEHOST_APP_PATH"
+  echo "Resetting the Silverstripe cache the web server reads: ${cache}"
+  rm -rf -- "$cache"
+  old_umask="$(umask)"
+  umask 0
+  mkdir -m 0777 "$cache"
+  umask "$old_umask"
+  printf '%s\n' 'Require all denied' > "${cache}/.htaccess"
+  chmod 0777 "$cache"
+}
+
+# Reload PHP so the process serving the site reads the new code and .env.
+restart_php_supervisor() {
+  if ! command -v supervisorctl >/dev/null 2>&1; then
+    echo "supervisorctl is not available, so php was not restarted." >&2
+    exit 1
+  fi
+  echo "Restarting php"
+  supervisorctl restart php
+}
+
 # Write the database host, user, and password to a private MySQL defaults file.
 # Sets the global `defaults` path. The caller's EXIT trap removes that file.
 write_mysql_defaults() {

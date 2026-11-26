@@ -23,30 +23,6 @@ assert_backup_root_path() {
   assert_absolute_path "SITEHOST_BACKUP_ROOT" "$SITEHOST_BACKUP_ROOT"
 }
 
-# Wait for the backup root to appear. SiteHost links it to an automounted
-# directory that is only mounted once something opens it, so the first check
-# in a fresh SSH session can miss it. Listing it starts the mount.
-wait_for_backup_root() {
-  local wait_seconds="${BACKUP_ROOT_WAIT_SECONDS:-30}"
-  local poll_seconds="${BACKUP_ROOT_POLL_SECONDS:-2}"
-  if [[ ! "$wait_seconds" =~ ^[0-9]+$ || ! "$poll_seconds" =~ ^[0-9]+$ || "$poll_seconds" -lt 1 ]]; then
-    echo "BACKUP_ROOT_WAIT_SECONDS and BACKUP_ROOT_POLL_SECONDS must be whole numbers" >&2
-    exit 1
-  fi
-  local start=$SECONDS
-  while true; do
-    ls -A "${SITEHOST_BACKUP_ROOT%/}/" >/dev/null 2>&1 || true
-    if [[ -d "$SITEHOST_BACKUP_ROOT" ]]; then
-      return 0
-    fi
-    if (( SECONDS - start >= wait_seconds )); then
-      return 1
-    fi
-    echo "Waiting for the backup root to mount: ${SITEHOST_BACKUP_ROOT}" >&2
-    sleep "$poll_seconds"
-  done
-}
-
 # Require the backup root to exist. Pinning needs the directory SiteHost created.
 assert_backup_root() {
   assert_backup_root_path

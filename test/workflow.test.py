@@ -130,6 +130,18 @@ check("--fail" not in pre_run, "the pre-deploy status check must not use curl --
 check("exit 1" not in pre_run, "the pre-deploy status check must not fail the job")
 check("%{http_code}" in pre_run, "the pre-deploy status check must print the HTTP status")
 
+check(by_name["Smoke check"]["with"]["script"] == "smoke-site.sh", "the smoke check must run smoke-site.sh")
+check(order.index("Smoke check") < order.index("PHP error from the smoke check") < order.index("Roll back container"), "a failed smoke check prints the PHP error before rollback")
+check("steps.smoke.outcome == 'failure'" in str(by_name["PHP error from the smoke check"].get("if", "")), "the PHP error step runs only after a failed smoke check")
+smoke_script = (root / "actions" / "ssh" / "smoke-site.sh").read_text()
+check("--output /dev/null" not in smoke_script, "the smoke check must keep the response body")
+check("exit 1" in smoke_script and "Response excerpt" in smoke_script, "the smoke check must fail and print the response")
+restore_steps = [s["name"] for s in restore["jobs"]["restore"]["steps"]]
+restore_by_name = {s["name"]: s for s in restore["jobs"]["restore"]["steps"]}
+check(restore_by_name["Smoke check"]["with"]["script"] == "smoke-site.sh", "restore must use the same smoke check")
+check("steps.smoke.outcome == 'failure'" in str(restore_by_name["PHP error from the smoke check"].get("if", "")), "restore must print the PHP error when the smoke check fails")
+check(restore_steps.index("Smoke check") < restore_steps.index("PHP error from the smoke check"), "restore prints the PHP error after the smoke check")
+
 if errors:
     for e in errors:
         print(f"workflow test: {e}", file=sys.stderr)

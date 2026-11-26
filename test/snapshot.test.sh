@@ -12,6 +12,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+mkdir -p "${tmp}/bin"
+cat > "${tmp}/bin/supervisorctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${tmp}/bin/supervisorctl"
+export PATH="${tmp}/bin:${PATH}"
+
 export SITEHOST_BACKUP_ROOT="${tmp}/backups"
 export DEPLOY_LOG_DIR="${tmp}/logs"
 export SITEHOST_APP_PATH="${tmp}/application"
@@ -83,6 +91,15 @@ if [[ "$skipped" != *"Left the snapshot database"* ]]; then
 fi
 if [[ "$(cat "$SITEHOST_APP_PATH/index.php")" != "pinned" ]]; then
   echo "rollback did not restore application files" >&2
+  exit 1
+fi
+if [[ "$skipped" != *"Resetting the Silverstripe cache"* || "$skipped" != *"Restarting php"* ]]; then
+  echo "rollback should reset the web cache and restart php" >&2
+  printf '%s\n' "$skipped" >&2
+  exit 1
+fi
+if [[ ! -d "${SITEHOST_APP_PATH}/silverstripe-cache" ]]; then
+  echo "rollback should leave the web cache directory in place" >&2
   exit 1
 fi
 
@@ -260,6 +277,41 @@ if [[ "$mounted" != *"Recorded 1 existing snapshot directories"* ]]; then
   echo "record should wait for a backup root that mounts late" >&2
   printf '%s\n' "$mounted" >&2
   cat "${tmp}/automount.err" >&2
+  exit 1
+fi
+
+unset RESTORE_SNAPSHOT_DATABASE || true
+late="${tmp}/late-backups"
+export SITEHOST_BACKUP_ROOT="$late"
+export DEPLOY_LOG_DIR="${tmp}/logs-late"
+export SNAPSHOT_PATH="${late}/2026-11-26_02:28:45"
+printf 'before\n' > "$SITEHOST_APP_PATH/index.php"
+(
+  sleep 1
+  mkdir -p "${SNAPSHOT_PATH}/application"
+  printf 'restored\n' > "${SNAPSHOT_PATH}/application/index.php"
+) &
+set +e
+late_out="$(BACKUP_ROOT_WAIT_SECONDS=5 BACKUP_ROOT_POLL_SECONDS=1 bash "$rollback" 2>"${tmp}/late.err")"
+late_status=$?
+set -e
+wait || true
+if [[ "$late_status" -ne 0 || "$(cat "$SITEHOST_APP_PATH/index.php")" != "restored" ]] || ! grep -q "Waiting for the backup root to mount" "${tmp}/late.err"; then
+  echo "rollback should wait for the backup root to mount" >&2
+  printf '%s\n' "$late_out" >&2
+  cat "${tmp}/late.err" >&2
+  exit 1
+fi
+
+export SITEHOST_BACKUP_ROOT="${tmp}/never"
+export SNAPSHOT_PATH="${tmp}/never/missing"
+set +e
+never="$(BACKUP_ROOT_WAIT_SECONDS=1 BACKUP_ROOT_POLL_SECONDS=1 bash "$rollback" 2>&1)"
+never_status=$?
+set -e
+if [[ "$never_status" -eq 0 || "$never" != *"Backup root did not mount"* ]]; then
+  echo "rollback should fail when the backup root never mounts" >&2
+  printf '%s\n' "$never" >&2
   exit 1
 fi
 

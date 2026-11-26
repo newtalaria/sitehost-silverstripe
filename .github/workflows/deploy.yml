@@ -681,19 +681,16 @@ jobs:
       - name: Smoke check
         id: smoke
         if: success()
-        run: |
-          set -euo pipefail
-          case "$SITEHOST_SITE_URL" in
-            https://*|http://*) ;;
-            *)
-              echo "SITEHOST_SITE_URL must start with http:// or https://" >&2
-              exit 1
-              ;;
-          esac
-          curl --fail --silent --show-error --location \
-            --retry 8 --retry-delay 10 --retry-connrefused --retry-all-errors \
-            --output /dev/null --max-time 30 \
-            "$SITEHOST_SITE_URL"
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: smoke-site.sh
+
+      - name: PHP error from the smoke check
+        if: failure() && steps.smoke.outcome == 'failure'
+        uses: newtalaria/sitehost-silverstripe/actions/ssh@v1
+        with:
+          script: remote-php-error.sh
+          command_timeout: 2m
 
       - name: Fail for rollback test
         id: test-rollback

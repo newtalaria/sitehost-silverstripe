@@ -73,7 +73,11 @@ cat > "${bin}/mysql" <<'STUB'
 printf 'mysql %s\n' "$*" >> "$MYSQL_LOG"
 cat >> "$MYSQL_LOG"
 STUB
-chmod +x "${bin}/curl" "${bin}/mysql"
+cat > "${bin}/supervisorctl" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "${bin}/curl" "${bin}/mysql" "${bin}/supervisorctl"
 export PATH="${bin}:${PATH}"
 
 export CURL_LOG="${tmp}/curl.log"

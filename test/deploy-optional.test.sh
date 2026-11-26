@@ -48,6 +48,7 @@ chmod +x "${app}/vendor/bin/sake" "${app}/vendor/bin/talaria-sitehost"
 run_deploy() {
   : > "$CALLS"
   rm -f "${app}/.env"
+  rm -rf "${app}/silverstripe-cache"
   set +e
   out="$(
     env -u TALARIA_ENABLED -u TALARIA_REACHABLE -u TALARIA_API_KEY \
@@ -80,6 +81,13 @@ grep -q '^talaria-sitehost' "$CALLS" && fail "ran the Talaria installer without 
 grep -q '^git .*checkout --force --detach 0123456789abcdef0123456789abcdef01234567' "$CALLS" || fail "did not check out the commit" "$(cat "$CALLS")"
 grep -q '^sake dev/build flush=all' "$CALLS" || fail "did not run dev/build"
 grep -q '^supervisorctl restart php' "$CALLS" || fail "did not restart php"
+[[ "$out" == *"Resetting the Silverstripe cache the web server reads"* ]] || fail "did not reset the web cache" "$out"
+cache_at="$(printf '%s\n' "$out" | grep -n "Resetting the Silverstripe cache" | head -1 | cut -d: -f1)"
+php_at="$(printf '%s\n' "$out" | grep -n "Restarting php" | head -1 | cut -d: -f1)"
+[[ "$cache_at" -lt "$php_at" ]] || fail "the web cache must be reset before php restarts" "$out"
+[[ -d "${app}/silverstripe-cache" && -f "${app}/silverstripe-cache/.htaccess" ]] || fail "the web cache directory was not created"
+cache_mode="$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "${app}/silverstripe-cache")"
+[[ "$cache_mode" == "777" ]] || fail "the web cache directory must be writable by php-fpm" "$cache_mode"
 
 # 2. Talaria on and reachable: release in .env, installer runs, its failure fails the deploy.
 run_deploy TALARIA_ENABLED=true TALARIA_REACHABLE=true INSTALLER_EXIT=0 TALARIA_API_KEY=unused
@@ -92,6 +100,7 @@ grep -q '^TALARIA_RELEASE="main@0123456"$' "${app}/.env" || fail "Talaria on sho
 run_deploy TALARIA_ENABLED=true TALARIA_REACHABLE=true INSTALLER_EXIT=3
 [[ "$status" -ne 0 ]] || fail "an installer failure with Talaria reachable should fail" "$out"
 grep -q '^supervisorctl restart php' "$CALLS" && fail "restarted php after a failed Talaria install"
+[[ ! -d "${app}/silverstripe-cache" ]] || fail "a failed install must leave the web cache alone"
 
 # 3. Talaria on but unreachable at the key check: installer failure is a warning.
 run_deploy TALARIA_ENABLED=true TALARIA_REACHABLE=false INSTALLER_EXIT=3

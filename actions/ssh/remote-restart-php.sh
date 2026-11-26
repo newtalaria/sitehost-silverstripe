@@ -2,9 +2,9 @@
 # Restart php under supervisor after a restore. Does not change files.
 set -euo pipefail
 
-if ! command -v supervisorctl >/dev/null 2>&1; then
-  echo "supervisorctl is not available, so php was not restarted." >&2
-  exit 1
+if [[ -z "${SITEHOST_LIB_LOADED:-}" ]]; then
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 fi
-echo "Restarting php"
-supervisorctl restart php
+
+restart_php_supervisor
