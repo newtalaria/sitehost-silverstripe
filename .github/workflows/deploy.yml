@@ -436,6 +436,47 @@ jobs:
             exit 1
           fi
 
+      - name: Site status before deploy
+        if: success()
+        run: |
+          set -euo pipefail
+          meta="$(mktemp)"
+          body="$(mktemp)"
+          code="000"
+          final="$SITEHOST_SITE_URL"
+          note=""
+          if curl --silent --show-error --location \
+            --output "$body" \
+            --max-time 30 \
+            --write-out '%{http_code} %{url_effective}' \
+            "$SITEHOST_SITE_URL" > "$meta"; then
+            line="$(tr -d '\r' < "$meta")"
+            code="${line%% *}"
+            if [[ "$line" == *" "* ]]; then
+              final="${line#* }"
+            fi
+          else
+            note="The request did not finish."
+          fi
+          echo "Site status before deploy: HTTP ${code} ${final}"
+          if [[ -n "$note" ]]; then
+            echo "$note"
+          fi
+          if [[ ! "$code" =~ ^2[0-9][0-9]$ && -s "$body" ]]; then
+            excerpt="$(tr '\n\r' '  ' < "$body" | sed 's/<[^>]*>//g; s/[[:space:]]\+/ /g' | cut -c1-180)"
+            echo "Response excerpt: ${excerpt}"
+          fi
+          {
+            echo "### Site status before deploy"
+            echo
+            echo "HTTP \`${code}\` for \`${final}\`."
+            echo
+            echo "Recorded before the backup and the file changes. This does not stop the deploy."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ ! "$code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "::warning title=Site status before deploy::${final} returned HTTP ${code} before any change. The deploy continues."
+          fi
+
       - name: Record existing snapshots
         if: success() && inputs.container_snapshot
         uses: newtalaria/sitehost-silverstripe/actions/ssh@v1

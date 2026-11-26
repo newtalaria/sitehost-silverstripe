@@ -120,6 +120,16 @@ check(by_name["Wait for Talaria key update"]["if"] == "steps.set-keys.outcome ==
 check("TALARIA_BROWSER_API_KEY" not in by_name["Check Talaria keys"].get("env", {}), "the key check must read the resolved browser key")
 check("TALARIA_BROWSER_API_KEY" not in by_name["Deploy commit"]["with"]["env_names"].split(), "the browser key must not be sent over SSH")
 
+# Status before any backup or file change. It reports the code and never fails the job.
+pre = by_name["Site status before deploy"]
+pre_run = pre["run"]
+check(pre.get("if") == "success()", "the pre-deploy status check runs once config is valid")
+check(order.index("Site status before deploy") < order.index("Record existing snapshots"), "status is recorded before the container is touched")
+check(order.index("Site status before deploy") < order.index("Deploy commit"), "status is recorded before the deploy")
+check("--fail" not in pre_run, "the pre-deploy status check must not use curl --fail")
+check("exit 1" not in pre_run, "the pre-deploy status check must not fail the job")
+check("%{http_code}" in pre_run, "the pre-deploy status check must print the HTTP status")
+
 if errors:
     for e in errors:
         print(f"workflow test: {e}", file=sys.stderr)

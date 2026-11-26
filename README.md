@@ -421,15 +421,16 @@ Actions SSHes in with `SITEHOST_SSH_PRIVATE_KEY` and checks the host key with `S
 
 1. Find `TALARIA_API_KEY` in the workflow or on the SiteHost container, then check the Talaria settings. See [Talaria (optional)](#talaria-optional).
 2. With Talaria on and `upload_source_maps` on, build and upload the source maps. A failure here warns and the deploy continues.
-3. When `container_snapshot` is on, back up this container through the SiteHost API and record the new snapshot directory. The deploy does not continue until that backup finishes.
-4. Fetch the exact commit and check it out detached.
-5. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
-6. With Talaria on, write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`, then run the Talaria installer and collector when the site uses them.
-7. `supervisorctl restart php`.
-8. With Talaria on and `container_snapshot` on, write the two release values through the SiteHost environment API. A `TALARIA_API_KEY` or `TALARIA_BROWSER_API_KEY` passed in the workflow is written in that same request. SiteHost restarts the container to apply them. When the release update does not run, those workflow keys are still written, and the job waits for that restart.
-9. With source maps uploaded, copy the rewritten script onto the theme path. A failure here warns and leaves the script already on the container.
-10. Request `SITEHOST_SITE_URL`. The job allows 30 minutes for the remote deploy and 90 minutes overall.
-11. If step 4, 5, 6, 7, or 10 failed, or `test_rollback` is on, restore the application files and the database from the backup in step 3.
+3. Request `SITEHOST_SITE_URL` and print the HTTP status. A non-2xx answer or a request that does not finish is a warning. It does not stop the deploy.
+4. When `container_snapshot` is on, back up this container through the SiteHost API and record the new snapshot directory. The deploy does not continue until that backup finishes.
+5. Fetch the exact commit and check it out detached.
+6. Run `composer install` without dev dependencies, then `vendor/bin/sake dev/build flush=all`.
+7. With Talaria on, write `TALARIA_RELEASE` and `TALARIA_COMMIT_SHA` to `.env`, then run the Talaria installer and collector when the site uses them.
+8. `supervisorctl restart php`.
+9. With Talaria on and `container_snapshot` on, write the two release values through the SiteHost environment API. A `TALARIA_API_KEY` or `TALARIA_BROWSER_API_KEY` passed in the workflow is written in that same request. SiteHost restarts the container to apply them. When the release update does not run, those workflow keys are still written, and the job waits for that restart.
+10. With source maps uploaded, copy the rewritten script onto the theme path. A failure here warns and leaves the script already on the container.
+11. Request `SITEHOST_SITE_URL` again. This one must return a 2xx status. The job allows 30 minutes for the remote deploy and 90 minutes overall.
+12. If step 5, 6, 7, 8, or 11 failed, or `test_rollback` is on, restore the application files and the database from the backup in step 4.
 
 ## Backups
 
